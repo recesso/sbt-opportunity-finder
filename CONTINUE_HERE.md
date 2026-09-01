@@ -1,6 +1,6 @@
 # CONTINUE HERE
 
-**Last updated:** 2026-09-01 · scaffold complete, no implementation yet.
+**Last updated:** 2026-09-01 · E0.S1, E0.S2 and E0.S3 done. 54 tests green.
 
 If you are a new session or a new engineer, read this file, then `CLAUDE.md`, then run `bd ready`.
 That is the whole orientation.
@@ -11,36 +11,57 @@ That is the whole orientation.
 
 | | |
 |---|---|
-| **State** | Scaffold complete. Config written. Backlog loaded. **Zero implementation code.** |
-| **Next work** | `bd ready` — should surface E0.S1 (repo skeleton and CI) with nothing blocking it. |
-| **Nothing is running** | No scheduled jobs, no data collected, no database created yet. |
+| **Done** | E0.S1 tooling and CI · E0.S2 config loading and validation · E0.S3 secrets and log redaction |
+| **Next** | `bd ready` → **E1.S1** (SQLite schema) and **E0.S5** (logging + cost ledger) are both unblocked |
+| **Blocked on E1.S1** | E0.S4 (run harness) needs the `stage_run` table |
+| **Nothing is running** | No scheduled jobs, no data collected, no database created yet |
+
+```bash
+make install && make check     # 54 tests, offline, ~2s
+bd ready
+```
 
 ## What exists
 
-- `docs/` — the build spec, the delivery plan and the architecture decisions. Read
-  `docs/00-build-spec.md` before touching scoring or extraction.
-- `config/` — nine YAML files carrying every tunable value. These are complete and reviewed.
-  They are the contract that `E0.S2` implements loading and validation for.
-- `plan/backlog.yaml` — 14 epics, 52 stories, decomposed to atomic steps. Source of truth.
-- `scripts/load_backlog.py` — idempotent loader from the YAML into Beads.
-- Empty package skeleton under `src/finder/`.
+- `docs/` — build spec and delivery plan. Read `docs/00-build-spec.md` before touching scoring or
+  extraction.
+- `config/` — eight YAML files carrying every tunable value, now **loaded and validated** by
+  `src/finder/config.py`. Cross-file invariants are enforced at startup; a typo fails loudly.
+- `src/finder/config.py` — `load_config()` returns a frozen `Config` with a `hash` recorded on
+  every future score row.
+- `src/finder/secrets.py` + `src/finder/logging.py` — env-only secrets, `require()` reporting all
+  missing keys at once, and a structlog processor that makes it impossible for a key to appear in
+  a log line.
+- `plan/backlog.yaml` — 14 epics, 66 stories, decomposed to atomic steps. Source of truth.
+- `scripts/load_backlog.py` — idempotent loader into Beads.
 
 ## What does not exist yet
 
-Everything in `src/finder/` beyond empty `__init__.py` files. No database, no schema, no
-providers, no workers, no tests. That is the work.
+No database, no schema, no providers, no workers. `src/finder/` beyond the three modules above is
+empty packages.
 
-## The first three things to build, in order
+## The next three things, in order
 
-1. **E0** — config loading and validation, run harness with checkpointing, structured logging.
-   Nothing else can be built or tested without these.
-2. **E1** — SQLite schema, repositories, normalisation and dedupe keys.
-3. **E5.S2** — the mechanism extractor. **This is the highest-risk story in the plan.** Every
-   downstream number inherits its quality and no amount of good plumbing fixes a bad extractor.
-   Build it against the ten labelled pages before building anything on top of it.
+1. **E1.S1** — SQLite schema and migrations. Unblocks E0.S4 (run harness) and all of E1.
+2. **E1.S4** — normalisation and dedupe keys, with the 500-row labelled set. In the predecessor
+   database 880 of the 976 keyed rows were duplicates because the keys were never checked.
+3. **E5.S2** — the mechanism extractor. **Highest-risk story in the plan.** Every downstream
+   number inherits its quality and no plumbing fixes a bad extractor. Build it against the ten
+   labelled pages before building anything on top of it.
 
 Milestone M1 is the thinnest slice that produces a real ranked list:
 `E0 → E1 → E2 → E3.S2 → E5.S2 → E6.S1 → E7 → E9.S1`.
+
+## Decisions made while building, worth knowing
+
+- **`networks.yaml` gained `discovery_method`.** Config validation caught that
+  `ga_adjacent_chambers` had no `directory_url` and no `seed_members`, so W1 had nothing to
+  enumerate from. Rather than relax the check, the entry now declares `ams_host_patterns` — it is
+  enumerated by walking GrowthZone/MemberClicks host patterns per state, not by search.
+- **Config errors are flattened to one line** carrying file, field and reason. Pydantic's default
+  multi-line output buried the useful part.
+- **A test forbids geography from ever becoming a scored dimension** (`test_config.py`). The rule
+  is an ADR; the test is the guard rail.
 
 ## Three routes already verified by hand
 
