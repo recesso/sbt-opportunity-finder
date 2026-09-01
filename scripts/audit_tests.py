@@ -374,6 +374,129 @@ MUTATIONS: list[Mutation] = [
         why="The architectural boundary is only real while its scanner can see a "
         "violation. A blind guard is worse than none: it reports compliance.",
     ),
+    # --- extraction contract ----------------------------------------------
+    Mutation(
+        name="span-not-required",
+        path="src/finder/extract/schemas.py",
+        old="        if stated and not has_span:",
+        new="        if False:",
+        why="Without the span rule a model can assert anything about a page and the "
+        "record is indistinguishable from an extracted one. This is THE rule.",
+    ),
+    Mutation(
+        name="whitespace-counts-as-a-span",
+        path="src/finder/extract/schemas.py",
+        old='        has_span = bool((self.span or "").strip())',
+        new="        has_span = self.span is not None",
+        why="A span of three spaces satisfies the letter of the rule and supports "
+        "nothing, which is exactly how an evidence trail rots.",
+    ),
+    Mutation(
+        name="not-stated-may-carry-a-span",
+        path="src/finder/extract/schemas.py",
+        old="        if not stated and has_span:",
+        new="        if False:",
+        why="A quote attached to 'not stated' is a contradiction, and a contradictory "
+        "evidence trail is worse than a gap.",
+    ),
+    Mutation(
+        name="extra-keys-allowed",
+        path="src/finder/extract/schemas.py",
+        old='    model_config = ConfigDict(frozen=True, extra="forbid")\n\n\n# --- common',
+        new='    model_config = ConfigDict(frozen=True, extra="allow")\n\n\n# --- common',
+        why="An invented field is an invented claim; allowing extras lets one through "
+        "silently instead of failing the record.",
+    ),
+    Mutation(
+        name="malformed-output-not-retried",
+        path="src/finder/extract/schemas.py",
+        old="            continue\n        return record",
+        new="            break\n        return record",
+        why="One bad answer quarantines a page that a single retry with the error "
+        "would have fixed, and real yield drops for no reason.",
+    ),
+    Mutation(
+        name="retry-feedback-is-generic",
+        path="src/finder/extract/schemas.py",
+        old='                "Your previous answer was rejected. Fix exactly these problems "\n'
+        '                "and return the whole object again:\\n- " + "\\n- ".join(errors)',
+        new='                "Your previous answer was rejected. Try again."',
+        why="A retry that does not name the violation is a coin flip. The errors are "
+        "the only thing that makes the second attempt better than the first.",
+    ),
+    Mutation(
+        name="quarantine-becomes-repair",
+        path="src/finder/extract/schemas.py",
+        old="    return Quarantined(family=family, attempts=max_attempts, errors=errors, raw=raw)",
+        new="    return SCHEMAS[family].model_construct(**(raw if isinstance(raw, dict) else {}))",
+        why="model_construct skips validation. This is the exact shape of 'coerce it "
+        "into a record so the pipeline keeps moving', which the contract forbids.",
+    ),
+    Mutation(
+        name="quarantine-drops-the-evidence",
+        path="src/finder/extract/schemas.py",
+        old="errors=errors, raw=raw)",
+        new="errors=[], raw=None)",
+        why="A quarantine that throws away the payload and the reasons teaches nothing "
+        "and cannot be debugged.",
+    ),
+    Mutation(
+        name="impossible-dates-accepted",
+        path="src/finder/extract/schemas.py",
+        old="            date.fromisoformat(str(field.value))",
+        new="            pass",
+        why="2026-02-31 passes the pattern and fails the calendar. It looks usable, "
+        "which is worse than missing.",
+    ),
+    Mutation(
+        name="trigger-dates-unchecked",
+        path="src/finder/extract/schemas.py",
+        old="            date.fromisoformat(trigger.occurred_on)",
+        new="            pass",
+        why="The EMPLOYER family is built on recency; an uncheckable trigger date "
+        "makes the decay meaningless.",
+    ),
+    Mutation(
+        name="employer-route-without-a-trigger",
+        path="src/finder/extract/schemas.py",
+        old="        if not self.triggers:",
+        new="        if False:",
+        why="With nothing that changed there is no reason to call. The family's whole "
+        "premise is that something just happened.",
+    ),
+    Mutation(
+        name="route-type-not-constrained",
+        path="src/finder/extract/schemas.py",
+        old="    route_type: Field[RoomRouteType]",
+        new="    route_type: Field[Any]",
+        why="An unconstrained route_type lets the model answer with a type that has no "
+        "score, and the route silently ranks at zero.",
+    ),
+    Mutation(
+        name="founder-field-exposed",
+        path="src/finder/extract/schemas.py",
+        old="    connector: Field[NonEmpty]\n    role_change: RoleChange",
+        new="    connector: Field[NonEmpty]\n    known_to_art: Field[NonEmpty]\n"
+        "    role_change: RoleChange",
+        why="known_to_art is the founder's answer. A slot in the schema is an "
+        "invitation for a model to guess it, and the guess would outrank the truth.",
+    ),
+    Mutation(
+        name="non-json-response-crashes",
+        path="src/finder/extract/schemas.py",
+        old="        except json.JSONDecodeError as exc:",
+        new="        except KeyboardInterrupt as exc:",
+        why="A model that answers in prose must be a violation the retry can handle, "
+        "not an exception that ends the run.",
+    ),
+    Mutation(
+        name="prompt-clause-dropped",
+        path="src/finder/extract/schemas.py",
+        old='    "Never treat a past cycle as a current open one.",',
+        new="",
+        why="Each clause is a failure the predecessor actually made. Dropping one is "
+        "how last year's closed call comes back as this year's opportunity.",
+    ),
 ]
 
 
