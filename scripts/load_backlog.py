@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -25,6 +26,10 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKLOG = ROOT / "plan" / "backlog.yaml"
+
+
+def bd_available() -> bool:
+    return shutil.which("bd") is not None
 
 
 def bd(*args: str, capture: bool = True) -> str:
@@ -39,6 +44,8 @@ def bd(*args: str, capture: bool = True) -> str:
 
 def existing_beads() -> dict[str, str]:
     """Map story/epic id -> bead id, by title prefix."""
+    if not bd_available():
+        return {}
     raw = bd("list", "--json")
     if not raw:
         return {}
@@ -96,6 +103,10 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
+    if not args.dry_run and not bd_available():
+        sys.stderr.write("bd is not on PATH. Install beads, or use --dry-run.\n")
+        return 1
+
     data = yaml.safe_load(BACKLOG.read_text(encoding="utf-8"))
     epics = data["epics"]
 
@@ -118,10 +129,23 @@ def main() -> int:
             if args.dry_run:
                 print(f"CREATE epic  {title}")
                 continue
-            new_id = bd(
-                "create", title, "-t", "epic", "-p", prio,
-                "-d", body, "-l", f"epic,{eid}", "--silent",
-            ).splitlines()[-1].strip()
+            new_id = (
+                bd(
+                    "create",
+                    title,
+                    "-t",
+                    "epic",
+                    "-p",
+                    prio,
+                    "-d",
+                    body,
+                    "-l",
+                    f"epic,{eid}",
+                    "--silent",
+                )
+                .splitlines()[-1]
+                .strip()
+            )
             created[eid] = new_id
             n_new += 1
 
@@ -139,20 +163,44 @@ def main() -> int:
 
             if sid in have:
                 if not args.dry_run:
-                    bd("update", have[sid], "--description", body,
-                       "--priority", prio, "--acceptance", acceptance)
+                    bd(
+                        "update",
+                        have[sid],
+                        "--description",
+                        body,
+                        "--priority",
+                        prio,
+                        "--acceptance",
+                        acceptance,
+                    )
                 n_upd += 1
             else:
                 if args.dry_run:
-                    print(f"CREATE story {title}  (blocked by: {story.get('depends') or 'nothing'})")
+                    blocked = story.get("depends") or "nothing"
+                    print(f"CREATE story {title}  (blocked by: {blocked})")
                     continue
                 parent = created.get(eid)
                 extra = ["--parent", parent] if parent else []
-                new_id = bd(
-                    "create", title, "-t", "task", "-p", prio,
-                    "-d", body, "--acceptance", acceptance,
-                    "-l", labels, *extra, "--silent",
-                ).splitlines()[-1].strip()
+                new_id = (
+                    bd(
+                        "create",
+                        title,
+                        "-t",
+                        "task",
+                        "-p",
+                        prio,
+                        "-d",
+                        body,
+                        "--acceptance",
+                        acceptance,
+                        "-l",
+                        labels,
+                        *extra,
+                        "--silent",
+                    )
+                    .splitlines()[-1]
+                    .strip()
+                )
                 created[sid] = new_id
                 n_new += 1
 
@@ -172,7 +220,8 @@ def main() -> int:
                     # blocker blocks target
                     subprocess.run(
                         ["bd", "-C", str(ROOT), "dep", "add", target, blocker],
-                        capture_output=True, text=True,
+                        capture_output=True,
+                        text=True,
                     )
 
     n_stories = sum(len(e.get("stories", [])) for e in epics)
