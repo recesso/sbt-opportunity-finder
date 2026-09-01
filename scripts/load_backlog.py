@@ -43,10 +43,16 @@ def bd(*args: str, capture: bool = True) -> str:
 
 
 def existing_beads() -> dict[str, str]:
-    """Map story/epic id -> bead id, by title prefix."""
+    """Map story/epic id -> bead id, by title prefix.
+
+    ``--all`` and ``--limit 0`` are both load-bearing. ``bd list`` defaults to
+    open issues only and a limit of 50; without either flag this function
+    silently under-reports and the loader recreates everything it could not see.
+    That is exactly how 30 duplicate beads were created on 2026-09-01.
+    """
     if not bd_available():
         return {}
-    raw = bd("list", "--json")
+    raw = bd("list", "--json", "--all", "--limit", "0")
     if not raw:
         return {}
     try:
@@ -63,6 +69,27 @@ def existing_beads() -> dict[str, str]:
         if key and bead_id:
             out[key] = bead_id
     return out
+
+
+def duplicate_keys() -> set[str]:
+    """Story/epic ids that map to more than one bead."""
+    if not bd_available():
+        return set()
+    raw = bd("list", "--json", "--all", "--limit", "0")
+    if not raw:
+        return set()
+    try:
+        items = json.loads(raw)
+    except json.JSONDecodeError:
+        return set()
+    if isinstance(items, dict):
+        items = items.get("issues", items.get("items", []))
+    seen: dict[str, int] = {}
+    for it in items:
+        key = it.get("title", "").split(" ", 1)[0].strip()
+        if key:
+            seen[key] = seen.get(key, 0) + 1
+    return {k for k, n in seen.items() if n > 1}
 
 
 def render_body(story: dict) -> str:
@@ -101,6 +128,11 @@ def render_body(story: dict) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument(
+        "--update",
+        action="store_true",
+        help="also refresh bodies of beads that already exist (slow: one call each)",
+    )
     args = ap.parse_args()
 
     if not args.dry_run and not bd_available():
@@ -112,7 +144,8 @@ def main() -> int:
 
     have = existing_beads()
     created: dict[str, str] = dict(have)
-    n_new = n_upd = 0
+    n_new = n_upd = n_skip = 0
+    new_ids: set[str] = set()
 
     # ---- epics -------------------------------------------------------------
     for epic in epics:
@@ -122,9 +155,11 @@ def main() -> int:
         prio = str(epic.get("priority", 2))
 
         if eid in have:
-            if not args.dry_run:
+            if args.update and not args.dry_run:
                 bd("update", have[eid], "--description", body, "--priority", prio)
-            n_upd += 1
+                n_upd += 1
+            else:
+                n_skip += 1
         else:
             if args.dry_run:
                 print(f"CREATE epic  {title}")
@@ -147,6 +182,7 @@ def main() -> int:
                 .strip()
             )
             created[eid] = new_id
+            new_ids.add(eid)
             n_new += 1
 
     # ---- stories -----------------------------------------------------------
@@ -162,7 +198,7 @@ def main() -> int:
             acceptance = story.get("acceptance", "").strip()
 
             if sid in have:
-                if not args.dry_run:
+                if args.update and not args.dry_run:
                     bd(
                         "update",
                         have[sid],
@@ -173,7 +209,9 @@ def main() -> int:
                         "--acceptance",
                         acceptance,
                     )
-                n_upd += 1
+                    n_upd += 1
+                else:
+                    n_skip += 1
             else:
                 if args.dry_run:
                     blocked = story.get("depends") or "nothing"
@@ -202,13 +240,19 @@ def main() -> int:
                     .strip()
                 )
                 created[sid] = new_id
+                new_ids.add(sid)
                 n_new += 1
 
     # ---- dependencies ------------------------------------------------------
-    if not args.dry_run:
+    # Only for beads created in THIS run. Re-adding an existing edge is a no-op
+    # to bd but costs a subprocess call, and at 66 stories that is what made an
+    # unchanged reload take minutes and time out mid-write.
+    if not args.dry_run and new_ids:
         for epic in epics:
             for story in epic.get("stories", []):
                 sid = story["id"]
+                if sid not in new_ids:
+                    continue
                 target = created.get(sid)
                 if not target:
                     continue
@@ -228,10 +272,26 @@ def main() -> int:
     print(
         f"{'DRY RUN: ' if args.dry_run else ''}"
         f"{len(epics)} epics, {n_stories} stories "
-        f"({n_new} created, {n_upd} updated)"
+        f"({n_new} created, {n_upd} updated, {n_skip} unchanged)"
     )
-    if not args.dry_run:
-        print("\nNext:  bd ready")
+
+    if args.dry_run:
+        return 0
+
+    # A partial or mis-scoped read of the tracker must never leave duplicates
+    # behind unnoticed. On 2026-09-01 it did: bd list defaults to open-only with
+    # a limit of 50, so 30 of 80 beads were invisible and got recreated.
+    dupes = duplicate_keys()
+    if dupes:
+        sys.stderr.write(
+            "\nERROR: duplicate beads for: "
+            + ", ".join(sorted(dupes))
+            + "\nThe tracker is out of sync with plan/backlog.yaml. "
+            "Delete the extras before continuing.\n"
+        )
+        return 1
+
+    print("\nNext:  bd ready")
     return 0
 
 
