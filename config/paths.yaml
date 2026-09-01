@@ -1,0 +1,94 @@
+# Search terms for domain URL-inventory mapping.
+# One map call per organization. Never a full crawl.
+#
+# Validated 2026-09-01: one map call against gamep.org with PROGRAMMING_PATHS
+# surfaced the entire statewide lunch-and-learn series in seconds.
+version: 1
+
+PROGRAMMING_PATHS:   # ROOM family, used by W2 RouteMapper
+  - speak
+  - speaker
+  - call-for
+  - call for speakers
+  - presenters
+  - present
+  - submit
+  - submission
+  - proposal
+  - abstract
+  - education committee
+  - program committee
+  - programming
+  - committees
+  - councils
+  - council
+  - chapter
+  - society
+  - sme
+  - subject matter expert
+  - volunteer
+  - get involved
+  - instructors
+  - faculty
+  - trainer
+  - lunch and learn
+  - webinar
+  - workshop
+  - roundtable
+  - sponsorship
+  - prospectus
+  - membership
+  - member benefits
+  - board of directors
+  - leadership
+  - staff
+  - contact
+  - events
+  - calendar
+
+PARTNER_PATHS:       # CHANNEL family, used by W13 ChannelProspector
+  - partner
+  - partners
+  - partner with us
+  - become a partner
+  - provider
+  - providers
+  - third party
+  - third-party provider
+  - approved provider
+  - preferred provider
+  - vendor
+  - supplier
+  - consultant
+  - consultants
+  - instructor
+  - instructors
+  - faculty
+  - trainer
+  - trainers
+  - coach
+  - network
+  - work with us
+  - collaborate
+  - alliance
+  - affiliate
+  - board of directors
+  - advisory
+  - advisory board
+  - advisory council
+  - membership
+  - corporate members
+  - member companies
+  - rfp
+  - rfq
+  - procurement
+  - bids
+  - solicitations
+  - newsletter
+  - magazine
+  - podcast
+  - webinar
+  - blog
+  - contribute
+  - write for us
+  - editorial

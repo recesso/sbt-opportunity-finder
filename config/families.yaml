@@ -1,0 +1,72 @@
+# Route families and their route types. Family is the top-level type.
+# base = the route_strength anchor (0-5) used in the ROUTE score.
+version: 1
+
+families:
+  ROOM:
+    description: A gathering with employers in it where Art can present, workshop, sit on a council, or talk to people.
+    route_types:
+      OPEN_CALL:            {base: 5, requires: [route_url, deadline, formats_accepted]}
+      EVERGREEN_SUBMISSION: {base: 5, requires: [route_url]}
+      PROGRAM_COMMITTEE:    {base: 4, requires: [mechanism_name, owner]}
+      PARTNER_DELIVERY:     {base: 4, requires: [mechanism_name]}
+      NAMED_OWNER:          {base: 3, requires: [owner]}
+      COUNCIL_SEAT:         {base: 3, requires: [eligibility]}
+      MEMBER_PROGRAMMING:   {base: 3, requires: [mechanism_name]}
+      OPEN_REGISTRATION:    {base: 2, requires: [route_url]}
+      SPONSOR_CONTENT:      {base: 1, requires: [cost]}
+      UNKNOWN:              {base: 0, requires: []}
+
+  CHANNEL:
+    description: An organization relationship that reaches its employers with no event required.
+    route_types:
+      PROVIDER_NETWORK:     {base: 5, requires: [intake_url, intake_criteria]}
+      PARTNERSHIP_PROGRAM:  {base: 5, requires: [intake_url]}
+      CO_APPLICANT:         {base: 5, requires: [route_url, deadline]}
+      CLIENT_PROGRAM:       {base: 4, requires: [mechanism_name, owner]}
+      BOARD_ADVISORY:       {base: 4, requires: [eligibility]}
+      MEMBER_CHANNEL:       {base: 3, requires: [owner]}
+      NAMED_OWNER:          {base: 3, requires: [owner]}
+      UNKNOWN:              {base: 0, requires: []}
+
+  EMPLOYER:
+    description: A specific company with a live trigger that creates a capability problem now.
+    rule: Every EMPLOYER route must carry at least one trigger with a source_url.
+    route_types:
+      WARM_PATH:            {base: 5, requires: [reachable_via_person_id]}
+      CHANNEL_INTRO:        {base: 5, requires: [reachable_via_channel_route_id]}
+      OPEN_SOLICITATION:    {base: 4, requires: [route_url, deadline]}
+      NAMED_TARGET:         {base: 2, requires: [problem_owner]}
+      UNKNOWN:              {base: 0, requires: []}
+
+  PERSON:
+    description: The individual is the path, into a channel, a room or an employer.
+    route_types:
+      EXISTING_RELATIONSHIP: {base: 5, requires: [known_to_art]}
+      ONE_HOP:               {base: 4, requires: [connector_person_id]}
+      ROLE_CHANGE:           {base: 4, requires: [role_change_current]}
+      PUBLIC_OWNER:          {base: 2, requires: [controls]}
+
+# Openness multiplier: ROUTE = 100 * (base / 5) * openness
+openness:
+  open_now: 1.00
+  evergreen: 1.00
+  opens_known_date: 0.85
+  recurring_no_date: 0.70
+  closed_reopen_known: 0.50
+  closed_reopen_unknown: 0.30
+
+# Trigger decay for the EMPLOYER family.
+# strength = base * exp(-ln2 * age_days / half_life_days)
+# A trigger decayed below 1.0 drops the route to LIBRARY automatically.
+triggers:
+  contract_award:        {base: 5, half_life_days: 120}
+  grant_award:           {base: 5, half_life_days: 120}
+  automation_investment: {base: 5, half_life_days: 150}
+  new_site:              {base: 5, half_life_days: 180}
+  expansion:             {base: 5, half_life_days: 180}
+  ai_initiative:         {base: 4, half_life_days: 150}
+  hiring_surge:          {base: 4, half_life_days: 90}
+  leadership_change:     {base: 4, half_life_days: 90}
+  merger:                {base: 3, half_life_days: 180}
+  open_solicitation:     {base: 5, half_life_days: null}   # decays to its deadline

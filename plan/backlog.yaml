@@ -1,0 +1,1702 @@
+# SOURCE OF TRUTH for all planned work.
+#
+# Beads is DERIVED state, loaded from this file by scripts/load_backlog.py.
+# Edit here, run `make backlog`, and the tracker updates. Never create a bead
+# that this file does not know about.
+#
+# Every story must be executable by a stranger. If a story needs a chat
+# transcript to understand, the story is written wrong — fix the story.
+#
+# size: S ~ half a day · M ~ 1-2 days · L ~ 3-5 days, for one engineer.
+# No dates. No headcount assumption.
+
+version: 1
+prefix: sof
+
+epics:
+
+# ─────────────────────────────────────────────────────────────────────────────
+- id: E0
+  title: "Foundations: config, run harness, logging"
+  priority: 0
+  description: >
+    Nothing else can be built or tested until config loading, checkpointing and
+    logging exist. Every later epic depends on this one.
+  stories:
+
+  - id: E0.S1
+    title: "Repo skeleton, tooling and CI"
+    size: S
+    priority: 0
+    depends: []
+    description: >
+      Make the repo buildable and testable from a clean clone. pyproject, Makefile
+      and .gitignore already exist; this wires up the toolchain and CI so every
+      later story has a green baseline to work against.
+    files: [pyproject.toml, Makefile, .github/workflows/ci.yml, tests/test_smoke.py]
+    tasks:
+      - "Verify `pip install -e .[dev]` succeeds on a clean clone"
+      - "Add ruff config check and a smoke test"
+      - "Add GitHub Actions workflow running lint + tests on push and PR"
+    steps:
+      - "Create a venv, run `make install`, confirm no resolution errors."
+      - "Add tests/test_smoke.py asserting `import finder` works."
+      - "Run `make lint` and fix any findings in the existing files."
+      - "Create .github/workflows/ci.yml: checkout, setup-python 3.12, make install, make check."
+      - "Set the workflow to run with no network access available to tests (see E2.S7)."
+      - "Push and confirm the badge is green."
+    acceptance: >
+      `make check` passes on a clean clone with no network. CI is green on main.
+
+  - id: E0.S2
+    title: "Config-as-data with fail-fast validation"
+    size: M
+    priority: 0
+    depends: [E0.S1]
+    description: >
+      All tuning lives in config/*.yaml and nowhere else. Changing a weight must
+      never require a code change. Every score row records the config hash that
+      produced it, so any ranking change is attributable and rollback is one line.
+      The nine YAML files already exist and are the contract this implements.
+    files: [src/finder/config.py, tests/test_config.py]
+    tasks:
+      - "Pydantic models for all nine config files"
+      - "load_config() reading, validating and freezing"
+      - "config_hash computation"
+      - "Negative tests for every validation rule"
+    steps:
+      - "Define models: Families, Weights, Lexicon, Paths, Hosts, Networks, Thesis, Sources. Set `model_config = ConfigDict(extra='forbid', frozen=True)` so typos fail loudly."
+      - "Write load_config(dir: Path) -> Config that reads all nine files and returns one frozen aggregate."
+      - "Validate cross-file invariants: each family's fit_weights sum to exactly 100; every route_type referenced in families.yaml has a base in 0..5; every lexicon class named in strong_combinations exists."
+      - "Compute config_hash = sha256 over canonical JSON of the whole aggregate; expose as Config.hash."
+      - "Write tests: valid config loads; unknown key raises naming the file and field; weights summing to 99 raises; out-of-range base raises; hash changes when any value changes; hash is stable across runs."
+      - "Assert immutability: attempting to set an attribute after load raises."
+    acceptance: >
+      A deliberately corrupted YAML produces a single clear error naming file,
+      field and reason. Changing a weight in YAML and rescoring changes ranks
+      with no code change. Config.hash changes iff a value changed.
+
+  - id: E0.S3
+    title: "Secrets loading and log redaction"
+    size: S
+    priority: 0
+    depends: [E0.S1]
+    description: >
+      API keys come from the environment, never from files in the repo. A missing
+      key must fail at startup, not halfway through a run that has already spent
+      money. No key may ever appear in a log line.
+    files: [src/finder/secrets.py, src/finder/logging.py, tests/test_secrets.py]
+    tasks:
+      - "Typed settings object loaded from environment"
+      - "Startup validation of required keys per entry point"
+      - "Log filter that redacts any known secret value"
+    steps:
+      - "Define Secrets model with the fields in .env.example; load from os.environ with python-dotenv for local dev."
+      - "require(*names) raises at startup listing every missing key at once, not one at a time."
+      - "Write a structlog processor that scans rendered values and replaces any secret substring with '***REDACTED***'."
+      - "Test: log a message containing a fake key value, assert the value is absent and the marker present."
+      - "Test: missing key raises before any provider is constructed."
+    acceptance: >
+      No key appears in any log line. A missing key fails at startup naming all
+      missing keys at once.
+
+  - id: E0.S4
+    title: "RunContext, checkpointing and not_reached"
+    size: M
+    priority: 0
+    depends: [E0.S2, E1.S1]
+    description: >
+      The predecessor system died without writing anything on four consecutive
+      firings. The fix is architectural. Every stage is idempotent and keyed; a
+      killed run resumes from its last checkpoint; work that was truncated is
+      reported rather than silently dropped.
+    files: [src/finder/context.py, src/finder/store/migrations/002_stage_run.sql, tests/test_context.py]
+    tasks:
+      - "stage_run table and claim/complete/fail protocol"
+      - "not_reached accumulation and mandatory reporting"
+      - "--replay to re-execute downstream stages from stored snapshots"
+    steps:
+      - "Create table stage_run(run_id, stage, item_key, status, started_at, finished_at, error) with UNIQUE(run_id, stage, item_key)."
+      - "RunContext.claim(stage, item_key) -> bool: returns False if a DONE row exists, else inserts RUNNING and returns True."
+      - "RunContext.complete(stage, item_key) and .fail(stage, item_key, error). A failure is recorded and the loop continues; it is never raised past the item."
+      - "RunContext.not_reached.append(reason, detail) whenever a budget, time bound or provider outage truncates work."
+      - "Every worker loop wraps its items in claim/complete."
+      - "Add `python -m finder.run replay --run-id X` re-executing extraction and downstream stages from stored snapshots with zero refetching."
+      - "Test: process 100 items, kill at 47, restart. Assert items 1-47 are not reprocessed and 48-100 complete."
+      - "Test: a run truncated by budget writes a non-empty not_reached and still persists everything it completed."
+    acceptance: >
+      Kill mid-run, restart, and work resumes from the last checkpoint with no
+      duplicate processing. The run report lists what was not reached.
+
+  - id: E0.S5
+    title: "Structured logging and per-run cost accounting"
+    size: S
+    priority: 1
+    depends: [E0.S3]
+    description: >
+      Every log line carries run_id so a run can be reconstructed after the fact.
+      Every provider call records its cost so cost-per-good-route (E12.S3) is
+      computable and a spend spike is detectable.
+    files: [src/finder/logging.py, src/finder/cost.py, tests/test_cost.py]
+    tasks:
+      - "structlog JSON output bound to run_id"
+      - "CostLedger recording provider, operation, units and dollars"
+      - "Per-run totals written to the run row"
+    steps:
+      - "Configure structlog: JSON renderer, ISO timestamps, run_id bound at RunContext creation."
+      - "CostLedger.record(provider, operation, units, usd) appending to an in-memory list flushed to the run row."
+      - "Every provider adapter calls the ledger on each request."
+      - "Test: a synthetic run with three recorded calls totals correctly and appears on the run row."
+    acceptance: >
+      Every line carries run_id. Spend by provider is totalled per run.
+
+# ─────────────────────────────────────────────────────────────────────────────
+- id: E1
+  title: "Storage: schema, repositories, dedupe keys"
+  priority: 0
+  description: >
+    SQLite as the system of record (ADR-001). One file, no server. Founder-owned
+    fields are physically separated so no worker can write them.
+  stories:
+
+  - id: E1.S1
+    title: "SQLite schema and numbered migrations"
+    size: M
+    priority: 0
+    depends: [E0.S1]
+    description: >
+      Implements the schema in docs/00-build-spec.md section 06, plus the
+      stage_run table from E0.S4. Migrations are numbered .sql files applied in
+      order and recorded, so re-running is a no-op.
+    files: [src/finder/store/migrations/*.sql, src/finder/store/db.py, tests/test_migrations.py]
+    tasks:
+      - "Write DDL for every table"
+      - "Migration runner with a schema_version table"
+      - "Indices on every lookup path"
+    steps:
+      - "Write 001_initial.sql covering: organization, network, route, route_room, route_channel, occurrence, employer, trigger, person, evidence, score, signal, founder_mark, rejection, config_version, run."
+      - "Enable WAL mode and foreign_keys=ON in the connection factory."
+      - "Add indices: organization(canonical_domain) UNIQUE; route(series_key) UNIQUE; occurrence(occurrence_key) UNIQUE; route(family, status); route(last_verified); evidence(route_id); trigger(employer_id, occurred_on); rejection(match_name), rejection(match_domain)."
+      - "Migration runner: read migrations/*.sql sorted, apply any whose version exceeds schema_version, record each in a transaction."
+      - "Test: fresh DB builds from zero; running migrations twice is a no-op; a partially applied migration rolls back."
+    acceptance: >
+      A fresh database builds from migrations. Re-running the runner changes
+      nothing. Foreign keys are enforced.
+
+  - id: E1.S2
+    title: "Repository layer for every entity"
+    size: L
+    priority: 0
+    depends: [E1.S1]
+    description: >
+      All database access goes through repositories. No raw SQL outside
+      src/finder/store/. This is what makes the founder-owned write guard (E1.S3)
+      enforceable rather than aspirational.
+    files: [src/finder/store/repos.py, tests/test_repos.py]
+    tasks:
+      - "One repository class per entity with typed methods"
+      - "Lint rule forbidding sqlite3 or raw SQL imports outside store/"
+      - "Transaction helper for multi-table writes"
+    steps:
+      - "Implement OrganizationRepo, RouteRepo, EvidenceRepo, PersonRepo, EmployerRepo, TriggerRepo, ScoreRepo, SignalRepo, MarkRepo, RuleRepo, RunRepo, ConfigRepo."
+      - "Each exposes get/upsert/list with typed dataclass returns — never raw tuples or dicts."
+      - "Add a unit-of-work context manager wrapping multi-table writes in one transaction."
+      - "Add a ruff per-file-ignore inversion or a custom CI check: `grep -rn 'import sqlite3' src/finder --exclude-dir=store` must return nothing."
+      - "Test each repo round-trips its entity, including null-heavy rows."
+    acceptance: >
+      No raw SQL exists outside store/, enforced by a CI check that fails the
+      build. Every entity round-trips.
+
+  - id: E1.S3
+    title: "Founder-owned write guard"
+    size: S
+    priority: 0
+    depends: [E1.S2]
+    description: >
+      founder_mark and the founder-entered fields on person are his. A worker
+      attempting to write them is a P0 defect and must fail loudly rather than
+      succeed quietly. In the predecessor system this was enforced by convention
+      and was bypassed by the write path actually in use.
+    files: [src/finder/store/repos.py, tests/test_write_guard.py]
+    tasks:
+      - "FOUNDER_OWNED registry of table.column names"
+      - "Guard raising on any attempted write from a non-founder path"
+      - "Audit log entry on every attempt"
+    steps:
+      - "Define FOUNDER_OWNED = {'founder_mark': ALL, 'person': {'known_to_art','how_known','last_contact','connector_person_id'}}."
+      - "MarkRepo exposes only ingest_from_sheet() and read methods. There is no generic update path."
+      - "Add an assertion in the unit-of-work commit hook: if a write touches a founder-owned column and the caller is not the mark ingester, raise FounderFieldViolation and log at ERROR."
+      - "Test: a worker attempting the write raises; the exception names the table and column; an audit row is written."
+    acceptance: >
+      Any worker attempting a founder-owned write raises and is logged as a
+      defect. The test proves it.
+
+  - id: E1.S4
+    title: "Normalisation and content dedupe keys"
+    size: M
+    priority: 0
+    depends: [E1.S2]
+    description: >
+      Dedupe by content, never by ID. In the predecessor database 880 of the 976
+      rows carrying a key were inside duplicate clusters — the keys existed and
+      were never checked before a write. This story builds the keys and the
+      labelled set that proves they work.
+    files: [src/finder/store/keys.py, tests/test_keys.py, tests/fixtures/dedupe_labelled.csv]
+    tasks:
+      - "normalize_org and normalize_mechanism"
+      - "series_key and occurrence_key"
+      - "Fuzzy fallback with a tuned threshold"
+      - "Labelled evaluation set drawn from the predecessor master"
+    steps:
+      - "normalize_org(): casefold, strip accents, remove legal suffixes (inc, llc, corp, assn, association, society, the), collapse whitespace, strip punctuation."
+      - "series_key = sha1(normalize_org(org) + '|' + normalize_mechanism(mechanism))."
+      - "occurrence_key = series_key + '|' + (iso_date or 'recurring')."
+      - "Fuzzy fallback: rapidfuzz token_set_ratio >= 92 on normalised org AND the same registrable domain (use publicsuffix2)."
+      - "Build tests/fixtures/dedupe_labelled.csv: 500 rows sampled from the predecessor All Opportunities export, hand-labelled for true duplicates."
+      - "Measure precision and recall against the labelled set; tune the threshold; write the tuned value into config, not code."
+      - "Encode the known asymmetry: named Council/Committee/Chapter/Society/Post/Board sub-bodies keep their own record; generic 'Forum' and 'Speaker Bank' pages fold into the parent. Test both directions."
+    acceptance: >
+      >=0.98 precision and >=0.95 recall on the 500-row labelled set. The
+      sub-body asymmetry is tested in both directions.
+
+  - id: E1.S5
+    title: "Backup and restore"
+    size: S
+    priority: 2
+    depends: [E1.S1]
+    description: >
+      SQLite in ephemeral compute is the one real durability risk of ADR-001.
+      Mitigation is a post-run copy to durable storage and a tested restore.
+    files: [src/finder/store/backup.py, tests/test_backup.py]
+    tasks:
+      - "Post-run backup using the SQLite backup API, not a file copy"
+      - "Retention of 30 dated copies"
+      - "Restore path, tested"
+    steps:
+      - "Use sqlite3 Connection.backup() so the copy is consistent under WAL."
+      - "Write to data/backups/finder-YYYYMMDD-HHMM.db and optionally sync to object storage."
+      - "Prune to the 30 most recent."
+      - "Test: back up a populated DB, corrupt the original, restore, assert row counts and a sampled row match."
+    acceptance: >
+      Restore from any dated copy is demonstrated by a passing test, not asserted.
+
+  - id: E1.S6
+    title: "Migrate the three things worth keeping from the predecessor system"
+    size: M
+    priority: 1
+    depends: [E1.S2, E1.S4]
+    description: >
+      Do NOT migrate the 1,689 opportunity records — 90% of keyed rows are
+      duplicates and roughly a third of descriptions were fabricated. Migrate
+      exactly three things, all of which are irreplaceable because they encode
+      real human decisions.
+    files: [scripts/migrate_predecessor.py, tests/test_migration.py]
+    tasks:
+      - "Import the 66 distinct founder decisions as founder_mark rows"
+      - "Import the 9 permanent organization rejections as rejection rows"
+      - "Import distinct organization names and domains as W1 seed input"
+    steps:
+      - "Read the CSV export at Projects/GTM-Event-Tracker/tracker-export/ (read-only; never copy it into this repo)."
+      - "All Opportunities.csv and Action Queue.csv both use skiprows=4; Room and People registries use skiprows=2."
+      - "Extract every row whose Founder disposition is one of PURSUE, INVESTIGATE, MONITOR, SKIP THIS OCCURRENCE, DO NOT SURFACE AGAIN, COMPLETED. Expect 69 rows collapsing to 66 distinct after deduplication — three are duplicate pairs where the founder answered the same question twice."
+      - "Merge in the 4 decisions that exist only in Action Queue and never reached the master: OI-0632 GPS Education Partners PURSUE, OI-0400 GA DEcD+TAG PURSUE, OI-0436 Georgia HIMSS COMPLETED, OI-0469 Georgia Fintech Academy MONITOR."
+      - "For each DO NOT SURFACE AGAIN, write a rejection row keyed on BOTH normalised name and registrable domain."
+      - "Extract distinct organization names plus canonical domains into config-adjacent seed input for W1."
+      - "Test: the migration is idempotent; running twice yields the same row counts; no founder_mark is ever overwritten."
+    acceptance: >
+      66 distinct founder marks and 9 rejection rows exist. Re-running the
+      migration changes nothing. No opportunity records were imported.
+
+# ─────────────────────────────────────────────────────────────────────────────
+- id: E2
+  title: "Acquisition: fetch, snapshot, map"
+  priority: 0
+  description: >
+    Snapshot-first (ADR-004). Acquisition writes immutable content-addressed
+    snapshots; extraction reads only from those. No component both browses and
+    writes a record.
+  stories:
+
+  - id: E2.S1
+    title: "FetchProvider protocol and Firecrawl adapter"
+    size: M
+    priority: 0
+    depends: [E0.S3, E0.S5]
+    description: >
+      Every external service sits behind a Protocol (ADR-012) so it can be
+      swapped and faked. Fetch returns a Snapshot, never a live handle.
+    files: [src/finder/acquire/providers/base.py, src/finder/acquire/providers/firecrawl.py, src/finder/acquire/fetch.py, tests/test_fetch.py]
+    tasks:
+      - "Snapshot dataclass and FetchProvider Protocol"
+      - "Firecrawl adapter with cost recording"
+      - "Cache honouring content hash and max age"
+    steps:
+      - "Define frozen dataclass Snapshot(content_hash, url, canonical_url, markdown, links, status, fetched_at, is_pdf, provider)."
+      - "Define Protocol FetchProvider with fetch(url, max_age_s) -> Snapshot."
+      - "Implement FirecrawlFetch calling scrape with formats=['markdown','links'], onlyMainContent=True, maxAge honoured."
+      - "Compute content_hash = sha256 of whitespace-normalised markdown."
+      - "On fetch, if a snapshot with the same URL and hash exists and is younger than max_age_s, return it without a network call and record a cache hit."
+      - "Record cost on every live call."
+      - "Test with respx-mocked HTTP: a second identical fetch makes no network call."
+    acceptance: >
+      Returns a Snapshot. An identical URL fetched twice within max_age hits
+      cache on the second call, proven by an assertion on request count.
+
+  - id: E2.S2
+    title: "Content-addressed snapshot store"
+    size: S
+    priority: 0
+    depends: [E2.S1]
+    description: >
+      Immutable storage keyed by content hash. This is what makes extraction
+      reproducible offline and makes the independent audit (E5.S6) possible at all.
+    files: [src/finder/acquire/snapshot.py, tests/test_snapshot.py]
+    tasks:
+      - "put/get by hash, gzipped"
+      - "Immutability enforcement"
+    steps:
+      - "put(snapshot) writes data/snapshots/<sha256>.md.gz and returns the path; if the file exists, it is not rewritten."
+      - "get(hash) -> str decompresses and returns the text; raises if missing."
+      - "Never delete. Snapshots are the audit trail."
+      - "Test: put twice writes once; get round-trips exactly; a missing hash raises a clear error."
+    acceptance: >
+      Snapshots are immutable, gzipped and retrievable by hash. Extraction reads
+      only from here.
+
+  - id: E2.S3
+    title: "Politeness: robots, per-host rate limiting, backoff"
+    size: M
+    priority: 1
+    depends: [E2.S1]
+    description: >
+      The system fetches from hundreds of small association websites. Being a bad
+      citizen gets the project blocked and is also simply wrong.
+    files: [src/finder/acquire/politeness.py, tests/test_politeness.py]
+    tasks:
+      - "robots.txt fetch, cache and honour"
+      - "Per-host token bucket"
+      - "Retry with exponential backoff and jitter"
+    steps:
+      - "Fetch and cache robots.txt per host for 24h; skip disallowed paths and log the skip as a not_reached entry."
+      - "Token bucket per registrable domain, default 1 request per 2 seconds, configurable."
+      - "tenacity retry on 429 and 5xx: exponential backoff, full jitter, max 4 attempts; honour Retry-After when present."
+      - "Never retry a 4xx other than 429."
+      - "Set a descriptive User-Agent identifying the project and a contact address."
+      - "Test: 429 then 200 succeeds with one retry; a disallowed path is skipped and recorded."
+    acceptance: >
+      No host exceeds its configured rate. 429 and 5xx are retried with backoff.
+      Disallowed paths are skipped and reported, not silently dropped.
+
+  - id: E2.S4
+    title: "PDF parsing branch"
+    size: S
+    priority: 1
+    depends: [E2.S1]
+    description: >
+      Program books, sponsorship prospectuses and public board packets are almost
+      always PDFs. Source class 12 (agenda archives) depends on this.
+    files: [src/finder/acquire/pdf.py, tests/test_pdf.py, tests/fixtures/program_book.pdf]
+    tasks:
+      - "Detect PDFs and route to the parser"
+      - "Preserve page anchors for span citation"
+    steps:
+      - "Detect by Content-Type and by .pdf suffix."
+      - "Extract text with page markers so a quoted span can cite a page number."
+      - "Set Snapshot.is_pdf and store the extracted text as the snapshot body."
+      - "Test against a real conference program-book fixture: session titles and speaker names are recoverable."
+    acceptance: >
+      A program-book PDF yields text with page anchors preserved, and a span can
+      cite its page.
+
+  - id: E2.S5
+    title: "MapProvider and sitemap fallback"
+    size: M
+    priority: 0
+    depends: [E2.S1]
+    description: >
+      One map call per organization returns its URL inventory without a crawl.
+      This is the highest-leverage call in the system — validated 2026-09-01 when
+      a single map of gamep.org surfaced an entire statewide series.
+    files: [src/finder/acquire/map.py, tests/test_map.py]
+    tasks:
+      - "MapProvider Protocol and Firecrawl adapter"
+      - "sitemap.xml fallback parser"
+      - "Term matching and match-reason recording"
+    steps:
+      - "Define Protocol MapProvider.map(domain, terms, limit) -> list[MapHit(url, matched_term)]."
+      - "Implement the Firecrawl adapter passing the search term set."
+      - "Fallback: fetch /sitemap.xml and /sitemap_index.xml, parse, filter URLs whose path or title contains any term."
+      - "Record which term matched each URL — it becomes a reranker feature."
+      - "Test: a fixture domain with no sitemap still returns an inventory via the fallback."
+    acceptance: >
+      A domain with no sitemap still returns a URL inventory. Each hit records
+      the term that matched it.
+
+  - id: E2.S6
+    title: "Archive.org fallback for rotated and dead pages"
+    size: S
+    priority: 2
+    depends: [E2.S1]
+    description: >
+      Past agendas are the richest artifact in the system and organizations
+      routinely rotate them off the live site. Source class 12 depends on this.
+    files: [src/finder/acquire/archive.py, tests/test_archive.py]
+    tasks:
+      - "Wayback availability lookup and retrieval"
+      - "Snapshot provenance marking"
+    steps:
+      - "Query the Wayback availability API for the closest capture before a given date."
+      - "Fetch the capture and store it as a normal snapshot with provider='wayback' and the original capture timestamp as fetched_at."
+      - "Never present an archived page as current evidence — the record must carry the capture date."
+      - "Test: a 404 on a known-good past URL retrieves the last good capture and marks its provenance."
+    acceptance: >
+      A 404 on a known past URL retrieves the last good capture, marked with its
+      real capture date and provider.
+
+  - id: E2.S7
+    title: "Fixture recording so the suite runs offline"
+    size: M
+    priority: 0
+    depends: [E2.S1, E2.S5]
+    description: >
+      CI must never hit a live provider. Recorded fixtures make every later story
+      testable, deterministic and free.
+    files: [tests/conftest.py, tests/fixtures/http/*.json, scripts/record_fixtures.py]
+    tasks:
+      - "Record mode writing real responses to fixtures"
+      - "Replay mode used by default in tests"
+      - "A network guard that fails any test attempting a live call"
+    steps:
+      - "scripts/record_fixtures.py --url X writes the raw provider response to tests/fixtures/http/<sha1(url)>.json."
+      - "conftest.py installs a replay transport by default; a fixture miss raises with the command to record it."
+      - "Add an autouse fixture that patches socket to raise on any connection unless the test is marked `network`."
+      - "Record fixtures for the three verified seed routes plus ten extraction-labelled pages."
+    acceptance: >
+      The full suite runs with zero network calls. A test that attempts a live
+      call fails with an actionable message.
+
+# ─────────────────────────────────────────────────────────────────────────────
+- id: E3
+  title: "Recall harvesters"
+  priority: 1
+  description: >
+    Stage 1 of retrieval. Cheap, broad, tolerant of noise. Objective is to miss
+    nothing — a false positive costs cents, a missed opportunity is invisible
+    forever. Expect 10-50x the final volume; that is correct.
+  stories:
+
+  - id: E3.S1
+    title: "W1 NetworkRegistrar"
+    size: L
+    priority: 1
+    depends: [E2.S1, E1.S2]
+    description: >
+      The recall backbone. Each network in config/networks.yaml is a template that
+      replicates across N nodes. Establish the real node list from each network's
+      own directory — never trust the node_count_est planning figures.
+    files: [src/finder/harvest/w1_registry.py, tests/test_w1.py]
+    tasks:
+      - "Fetch and parse each network directory into a node list"
+      - "Upsert organizations with canonical domains"
+      - "Semantic discovery for organizations outside all networks"
+      - "Graph expansion from partner and member lists"
+    steps:
+      - "For each network with a directory_url, fetch and extract (name, url) pairs via LLM structured extraction against the stored snapshot."
+      - "Resolve each to a registrable domain; skip entries that resolve to the parent network itself."
+      - "Upsert organization rows with network_id and tier from config."
+      - "For networks with seed_members and no directory_url, seed from config then expand."
+      - "Semantic discovery: query with thesis text plus sector, collect organizations not already known."
+      - "Graph expansion to depth 2, cycle-safe, recording the provenance of each hop."
+      - "Test on three networks: node counts are plausible, domains resolve, and a re-run produces zero new rows for an unchanged directory."
+    acceptance: >
+      Three networks enumerated to real node lists. A second run against an
+      unchanged directory produces zero new organizations.
+
+  - id: E3.S2
+    title: "W2 RouteMapper — ROOM candidates"
+    size: M
+    priority: 1
+    depends: [E2.S5, E3.S1]
+    description: >
+      One map call per organization with PROGRAMMING_PATHS, tiered by last FIT.
+      Produces candidate URLs, not routes.
+    files: [src/finder/harvest/w2_routes.py, tests/test_w2.py]
+    tasks:
+      - "Tier selection from last score and founder marks"
+      - "Map call and candidate emission"
+      - "Checkpointed per organization"
+    steps:
+      - "Select organizations due by tier: A weekly, B biweekly, C monthly, per config/sources.yaml tiering."
+      - "For each, call map(domain, PROGRAMMING_PATHS) and emit candidates with the matched term."
+      - "Deduplicate candidate URLs within the run."
+      - "Wrap each organization in RunContext.claim so a killed run resumes."
+      - "Test against the recorded gamep.org fixture: the events series and the service pages both appear."
+    acceptance: >
+      gamep.org returns the events series and the service pages in one call.
+      Re-running mid-run does not re-map completed organizations.
+
+  - id: E3.S3
+    title: "W13 ChannelProspector — CHANNEL candidates"
+    size: L
+    priority: 1
+    depends: [E2.S5, E3.S1]
+    description: >
+      The no-event harvester, and the family the founder named as the goal. Maps
+      with PARTNER_PATHS and parses published provider directories, which name
+      the slot, the criteria, the approver and the incumbents in one page.
+    files: [src/finder/harvest/w13_channels.py, tests/test_w13.py]
+    tasks:
+      - "Map with PARTNER_PATHS"
+      - "Classify candidate page type"
+      - "Parse provider directories into existing_providers"
+      - "Propagate a solved pattern across peer network nodes"
+    steps:
+      - "map(domain, PARTNER_PATHS) -> candidates."
+      - "Classify each page: provider_directory | partner_program | board_page | rfp_page | media_channel | other."
+      - "For provider_directory pages, parse the table or list into existing_providers[] — this is who already holds the slot."
+      - "Extract relationship_nature (members|clients|contracted|funded|convened) and delivery_model (staff|instructors|partners|providers|mixed) from the organization's own words."
+      - "Locate the intake: url, criteria, approver, scope_contracted. Resolve off-domain links via config/hosts.yaml."
+      - "If no intake exists, emit route_type=UNKNOWN with unresolved[] set to the blocking question."
+      - "If the organization has a network_id, enqueue the same extraction pattern for every peer node."
+      - "Test against the gamep.org fixture: asserts delivery_model=instructors, route_type=UNKNOWN and a non-empty question."
+    acceptance: >
+      gamep.org yields a CHANNEL candidate DISTINCT from its ROOM candidate. If
+      the system produces only the ROOM route, this story is not done.
+
+  - id: E3.S4
+    title: "W5 PlatformSweeper — submission and event platforms"
+    size: L
+    priority: 2
+    depends: [E2.S1]
+    description: >
+      Source classes 4 and 5. The actual CFP forms live on a small number of
+      platforms; watching them catches a call the week it opens rather than the
+      week after it closes.
+    files: [src/finder/harvest/w5_platforms.py, tests/test_w5.py]
+    tasks:
+      - "Adapters for public browse/search on submission platforms"
+      - "Event platform queries by organizer, geography and keyword"
+      - "Reverse-resolution from off-domain links found by W3"
+    steps:
+      - "Implement adapters for the platforms in config/hosts.yaml that expose public search."
+      - "Query each by sector keyword crossed with lexicon class A and B terms."
+      - "Add Eventbrite and Cvent organizer queries seeded from known organizations."
+      - "Reverse-resolve: any submission host discovered by E5.S3 is added to the standing sweep list so the platform is monitored directly thereafter."
+      - "Test: a known open CFP on a submission platform is found from a recorded fixture."
+    acceptance: >
+      A known open CFP on a submission platform is found. Hosts discovered by
+      extraction are added to the sweep list automatically.
+
+  - id: E3.S5
+    title: "W5 — Grants.gov and SAM.gov adapters"
+    size: M
+    priority: 2
+    depends: [E2.S1]
+    description: >
+      Source classes 6 and 13. Where the intermediary and state-training work is
+      actually bought, and where an organization announces it now has money for
+      exactly this work. The abstract text is the signal, not the NAICS code.
+    files: [src/finder/harvest/w5_grants.py, tests/test_w5_grants.py]
+    tasks:
+      - "Grants.gov search API adapter"
+      - "SAM.gov opportunities API adapter"
+      - "Lexicon filtering on abstract text"
+    steps:
+      - "Query both APIs on a rolling window since the last run."
+      - "Filter by lexicon marker co-occurrence over the abstract or synopsis text, not by NAICS or PSC alone."
+      - "For awards, emit an EMPLOYER or CHANNEL candidate with a trigger of kind grant_award or contract_award carrying the award date and the abstract span."
+      - "For open solicitations, emit a CHANNEL candidate with route_type=CO_APPLICANT and the deadline."
+      - "Test: a seeded award appears with its abstract text and a correctly dated trigger."
+    acceptance: >
+      A seeded award appears as a dated trigger with its abstract span. Open
+      solicitations become CO_APPLICANT routes with deadlines.
+
+  - id: E3.S6
+    title: "W15 TraceHunter — peer mode"
+    size: L
+    priority: 1
+    depends: [E2.S1, E4.S1]
+    description: >
+      The highest-yield technique in the system. Take a roster of practitioners
+      doing adjacent work and harvest their public speaking histories. Every venue
+      is a proven outside-expert venue on this subject. It inverts discovery:
+      instead of asking 800 organizations whether they take speakers, start from
+      people who already got in and read off the answer.
+    files: [src/finder/harvest/w15_traces.py, tests/test_w15_peer.py]
+    tasks:
+      - "Seed the roster from query shapes in config/thesis.yaml"
+      - "Harvest speaking histories from bios and where-we-have-spoken pages"
+      - "Emit venues as candidates and peers as PERSON routes"
+    steps:
+      - "If practitioner_roster.people is empty, seed it by running seed_query_shapes semantically and extracting names plus firm domains for founder review."
+      - "For each roster member, map their domain for speaker/bio/press paths and extract every named venue."
+      - "For each venue: resolve to an organization (creating it if unknown) and attach precedent evidence with the quoted span."
+      - "Emit the practitioner as a PERSON route with route_type=PUBLIC_OWNER unless the founder has marked them known."
+      - "Depth 2 only: a venue found this way surfaces its own agenda, which names more speakers, and then stop."
+      - "Test: a roster of 20 yields at least one venue not reachable from any organization directory."
+    acceptance: >
+      A roster of 20 practitioners yields >=1 venue unreachable from any network
+      or organization directory, with precedent evidence attached.
+
+  - id: E3.S7
+    title: "W15 TraceHunter — trace and archive modes"
+    size: L
+    priority: 2
+    depends: [E2.S4, E2.S6, E4.S1]
+    description: >
+      Source classes 11, 12 and 14. A trace is never itself an opportunity — it
+      is evidence that upgrades one, or a pointer to one not yet found.
+    files: [src/finder/harvest/w15_traces.py, tests/test_w15_trace.py]
+    tasks:
+      - "Semantic search on trace phrasings crossed with subject lexicon"
+      - "Agenda and program-PDF parsing into session/speaker/affiliation/format"
+      - "Public minutes and board packets"
+      - "The three-output emission rule"
+    steps:
+      - "Trace mode: query trace_phrasings from config/lexicon.yaml crossed with class A and B terms; extract (org, person, topic, format, date)."
+      - "Archive mode: for each known organization, locate past-event and program pages including Wayback captures; parse into structured sessions."
+      - "Minutes mode: locate workforce board, EDA and chamber board packets; extract programming discussed but not yet published."
+      - "Emit exactly three things per trace: precedent evidence on the matching route; a PERSON route for the practitioner; a discovery if the organization was unknown."
+      - "Recency: traces decay in confidence, never in precedent — a 2023 trace still proves the organization has programmed outsiders."
+      - "Test: a seeded session report resolves to the right org, the right person, and precedent=5 with the quoted span."
+    acceptance: >
+      A seeded session report resolves to org, person and precedent=5 with a
+      verbatim span. A trace never becomes a route by itself.
+
+  - id: E3.S8
+    title: "Graph expansion from partner, sponsor and member lists"
+    size: M
+    priority: 2
+    depends: [E3.S1]
+    description: >
+      Pages already fetched name other organizations. Following those edges finds
+      organizations no query would have produced, and is how the system becomes
+      progressively smarter instead of re-running the same searches forever.
+    files: [src/finder/harvest/expand.py, tests/test_expand.py]
+    tasks:
+      - "Extract organization mentions from stored snapshots"
+      - "Depth-2 traversal, cycle-safe, with provenance per hop"
+    steps:
+      - "From any stored snapshot classified as partner/member/sponsor/board page, extract named organizations and their links."
+      - "Resolve each to a registrable domain; skip anything already known."
+      - "Record the provenance edge: discovered_from route_id or org_id, plus the span."
+      - "Enforce depth 2 and a visited set to prevent cycles."
+      - "Test: a fixture partner page yields new organizations with correct provenance and terminates at depth 2."
+    acceptance: >
+      Depth-2 expansion terminates, records provenance on every hop, and produces
+      organizations absent from all network directories.
+
+# ─────────────────────────────────────────────────────────────────────────────
+- id: E4
+  title: "Precision gate"
+  priority: 1
+  description: >
+    Stage 2 of retrieval. Expensive, narrow, intolerant of noise. Typically drops
+    80-95% of the candidate pool BEFORE extraction, which is where the cost model
+    works. A silently dropped good opportunity is a worse defect than a false
+    positive, so every drop records a reason.
+  stories:
+
+  - id: E4.S1
+    title: "Lexicon loader and marker co-occurrence gate"
+    size: M
+    priority: 1
+    depends: [E0.S2]
+    description: >
+      Precision comes from co-occurrence, not keywords. A page must hit at least
+      two marker classes. This single rule is why a broad "call for speakers"
+      search returns EMS conferences and a gated one does not — the EMS page hits
+      class E and nothing in class C.
+    files: [src/finder/precision/lexicon.py, tests/test_gate.py, tests/fixtures/gate_labelled.json]
+    tasks:
+      - "Marker matching with normalisation"
+      - "Co-occurrence rule and negative-density rule"
+      - "Recorded drop reasons"
+    steps:
+      - "Normalise page text: casefold, collapse whitespace, strip punctuation at token boundaries."
+      - "Count matches per class A-E and for N."
+      - "Reject if fewer than min_classes distinct classes hit; record reason='insufficient_class_coverage' with the classes that did hit."
+      - "Reject if negative_density > positive_density; record reason='negative_dominant'."
+      - "Return GateResult(passed, classes_hit, combo, reason) — combo is the two-letter code such as CE, used as a reranker feature."
+      - "Build tests/fixtures/gate_labelled.json from real pages including the EMS conference false positive observed on 2026-09-01."
+      - "Test: the EMS page is rejected with a recorded reason; the ETA call-for-speakers page passes with combo CE."
+    acceptance: >
+      A page hitting only class E is rejected with a machine-readable reason. The
+      ETA page passes and records its combination.
+
+  - id: E4.S2
+    title: "Thesis vectors per family"
+    size: S
+    priority: 2
+    depends: [E0.S2]
+    description: >
+      One canonical paragraph per family from config/thesis.yaml, embedded once
+      and stored. Used as a recall filter and one reranker feature — never as the
+      final score, because the ranking must stay explainable.
+    files: [src/finder/precision/thesis.py, tests/test_thesis.py]
+    tasks:
+      - "Embed and cache thesis text, keyed by model version"
+      - "Cosine similarity as a feature"
+    steps:
+      - "Embed each family thesis on first use; cache to disk keyed by (model_version, config_hash)."
+      - "Pin the embedding model version in config; changing it invalidates the cache and requires re-embedding."
+      - "Expose similarity(candidate_text, family) -> float in 0..1."
+      - "Test: a manufacturing council page scores higher against the ROOM thesis than a nursing CEU page."
+    acceptance: >
+      Similarity is computed and cached, and the cache invalidates when the model
+      version changes.
+
+  - id: E4.S3
+    title: "RerankProvider and adapter"
+    size: M
+    priority: 1
+    depends: [E2.S1]
+    description: >
+      A cross-encoder scoring (thesis, candidate) jointly is materially more
+      accurate than comparing independent embeddings, and is roughly one fiftieth
+      the cost of extraction. This is the single biggest precision lever.
+    files: [src/finder/acquire/providers/rerank.py, tests/test_rerank.py]
+    tasks:
+      - "RerankProvider Protocol"
+      - "Adapter for the chosen reranker"
+      - "Deterministic ordering and cost recording"
+    steps:
+      - "Define Protocol RerankProvider.rerank(query, docs, top_k) -> list[RerankHit(index, score)]."
+      - "Implement one adapter; keep the interface narrow enough that a second is a drop-in."
+      - "Truncate documents to the provider's token limit at a sentence boundary, preferring the region with the densest marker hits."
+      - "Record cost per call."
+      - "Test: a fixed input set produces a stable ordering across runs."
+    acceptance: >
+      Deterministic ordering for a fixed input set. Cost is recorded per call.
+
+  - id: E4.S4
+    title: "W16 Reranker orchestration with recorded drop reasons"
+    size: M
+    priority: 1
+    depends: [E4.S1, E4.S2, E4.S3]
+    description: >
+      Runs the gate, then similarity, then the cross-encoder, and emits a keep or
+      drop decision with its reason and features. A wrongly dropped candidate must
+      be diagnosable rather than invisible.
+    files: [src/finder/precision/w16_rerank.py, tests/test_w16.py]
+    tasks:
+      - "Pipeline the three precision steps"
+      - "Assemble the feature vector"
+      - "Persist every decision with its reason"
+    steps:
+      - "Features: classes_hit, combo, thesis_similarity, has_offdomain_submission_link, names_programming_owner, names_employers, page_type."
+      - "Run gate first (free), then similarity (cheap), then cross-encoder (paid) only on survivors."
+      - "Persist a decision row for every candidate including drops, with reason and features."
+      - "Emit run-level counts: candidates_generated, survived_gate, survived_rerank."
+      - "Test: every dropped candidate has a non-null machine-readable reason."
+    acceptance: >
+      Every dropped candidate carries a reason and its features. Run counts show
+      a healthy drop rate of 80-95%, not 100%.
+
+  - id: E4.S5
+    title: "M4 kNN veto over labelled negatives"
+    size: M
+    priority: 2
+    depends: [E4.S4, E11.S1]
+    description: >
+      Retrieval-augmented judging. No training. The founder's rejected
+      near-misses become few-shot context and a demotion signal, weighted 3x
+      because right-org-wrong-room teaches the boundary and obvious junk does not.
+    files: [src/finder/learn/knn.py, tests/test_knn.py]
+    tasks:
+      - "Nearest labelled examples by reranker similarity"
+      - "Veto rule and citation of the founder's own words"
+      - "Near-miss weighting"
+    steps:
+      - "For a candidate, retrieve the top-5 most similar labelled examples using the reranker."
+      - "Weight near-misses 3x when selecting neighbours — a near-miss is a rejection whose FIT was >= the BEST threshold."
+      - "If >=3 neighbours are negative and 0 are positive, demote and set reason to 'resembles {org} which you rejected: {his words}'."
+      - "Otherwise include the neighbours as few-shot context in the judge prompt."
+      - "Test: a candidate resembling three known rejections is demoted and the reason names them."
+    acceptance: >
+      A candidate resembling >=3 rejections is demoted, citing which ones and the
+      founder's own words.
+
+# ─────────────────────────────────────────────────────────────────────────────
+- id: E5
+  title: "Extraction and verification"
+  priority: 0
+  description: >
+    The highest-risk epic. Every downstream number inherits extraction quality
+    and no amount of good plumbing fixes a bad extractor. Build against labelled
+    pages before building anything on top.
+  stories:
+
+  - id: E5.S1
+    title: "Extraction JSON schemas, common and per family"
+    size: M
+    priority: 0
+    depends: [E0.S2]
+    description: >
+      Schema-forced structured output. Compose prose from fields; never ask for a
+      paragraph. Schema-invalid output is rejected and retried, never coerced.
+    files: [src/finder/extract/schemas.py, tests/test_schemas.py]
+    tasks:
+      - "Common schema plus four family extensions"
+      - "Field wrapper carrying value, span and source_url"
+      - "Retry on schema violation"
+    steps:
+      - "Define Field[T] = {value: T | NOT_STATED, span: str | None, source_url: str}."
+      - "Define the common schema and the ROOM, CHANNEL, EMPLOYER and PERSON extensions per docs/00-build-spec.md section 05."
+      - "Generate the JSON Schema from the Pydantic models and pass it to the model as a hard constraint."
+      - "On validation failure, retry once with the validation error appended; on second failure, quarantine and log — never coerce."
+      - "Test: a deliberately malformed model response is rejected, retried, and quarantined rather than silently repaired."
+    acceptance: >
+      Schema-invalid output is rejected and retried, never coerced into a record.
+
+  - id: E5.S2
+    title: "W3 MechanismExtractor"
+    size: L
+    priority: 0
+    depends: [E5.S1, E2.S2, E4.S4]
+    description: >
+      THE HIGHEST-RISK STORY IN THE PLAN. Reads only stored snapshot text and
+      emits a route draft with field-level provenance. Build it against the ten
+      labelled pages first; everything else waits on it being right.
+    files: [src/finder/extract/w3_mechanism.py, src/finder/extract/prompts/, tests/test_w3.py, tests/fixtures/extraction_labelled/]
+    tasks:
+      - "Prompt with the non-negotiable clauses"
+      - "Extraction against snapshot text only"
+      - "Ten hand-labelled pages as the evaluation set"
+    steps:
+      - "Prompt must state: not_stated is correct and preferred; never infer audience from a title, an organization name or a sponsor list; never treat a past cycle as a current one; return the verbatim span for every value; separate what the page says from what you conclude; today's date is supplied, compare every deadline to it."
+      - "Pass ONLY the stored snapshot text. The model has no browsing capability in this call."
+      - "Version the prompt; store prompt_version on every extraction so a regression is attributable."
+      - "Build tests/fixtures/extraction_labelled/ with ten pages: the ETA call, the GSAE form page, a GaMEP event page, a GaMEP service page, a chamber council page, a past agenda PDF, a practitioner post, a provider directory, a thin page with almost no detail, and a page that looks relevant but has no route."
+      - "Hand-label the expected field values for all ten."
+      - "Measure field accuracy and span validity; iterate on the prompt until the gate is met."
+      - "Test the thin page specifically: it must produce mostly not_stated, not invented detail."
+    acceptance: >
+      >=90% field accuracy on the ten labelled pages and ZERO fabricated spans.
+      The thin page yields not_stated rather than plausible invention.
+
+  - id: E5.S3
+    title: "Off-domain submission link resolution"
+    size: M
+    priority: 0
+    depends: [E5.S2]
+    description: >
+      The mechanism is frequently not on the organization's own domain. GSAE's
+      speaker form is a SurveyMonkey link embedded in body text, which is exactly
+      why the founder could not find it by hand.
+    files: [src/finder/extract/offdomain.py, tests/test_offdomain.py]
+    tasks:
+      - "Scan outbound links against config/hosts.yaml"
+      - "Promote a matching link to route_url"
+      - "Feed discovered hosts back to W5"
+    steps:
+      - "For each snapshot, scan Snapshot.links for any host in submission_hosts."
+      - "If found within or adjacent to a section whose text hits lexicon class E, set route_url to the outbound link and is_offdomain=true."
+      - "Prefer the link nearest the class-E marker when several match."
+      - "Register any newly seen submission host for W5's standing sweep."
+      - "Test against the recorded gsae.org fixture: route_url == 'https://www.surveymonkey.com/r/NKSQCY6' and is_offdomain is true."
+    acceptance: >
+      The GSAE fixture yields the SurveyMonkey URL as route_url with
+      is_offdomain=true.
+
+  - id: E5.S4
+    title: "Span validation — no span, no field"
+    size: S
+    priority: 0
+    depends: [E5.S2]
+    description: >
+      The mechanical defence against fabrication. A claimed span that is not in
+      the snapshot means the field was invented, and the field is discarded rather
+      than softened.
+    files: [src/finder/extract/spans.py, tests/test_spans.py]
+    tasks:
+      - "Exact, normalised and fuzzy span matching"
+      - "Downgrade and quarantine rules"
+      - "hallucinated_span_count by prompt version"
+    steps:
+      - "For each field with a span, search the snapshot text for that span."
+      - "Exact match -> accept."
+      - "Normalised match (whitespace, curly quotes, en/em dashes folded) -> accept and record the normalisation applied."
+      - "Fuzzy match >=95 -> accept and flag span_approximate."
+      - "Below threshold -> set the field to not_stated and increment hallucinated_span_count for that prompt_version."
+      - "If one extraction has >=2 unfindable spans, quarantine the whole record and alert."
+      - "Expose hallucinated_span_count by prompt_version as the early-warning signal for prompt regression."
+      - "Test: a synthetic snapshot with a deliberately invented field yields not_stated and increments the counter."
+    acceptance: >
+      A claimed span absent from the snapshot downgrades the field to not_stated
+      and increments the counter. Two such spans quarantine the record.
+
+  - id: E5.S5
+    title: "W4 RoomProfiler"
+    size: M
+    priority: 1
+    depends: [E5.S2]
+    description: >
+      Makes employer_presence and relationship_depth measurements rather than
+      guesses, by reading membership, council, committee, board and about pages.
+    files: [src/finder/extract/w4_room.py, tests/test_w4.py]
+    tasks:
+      - "Determine member_unit from membership pages"
+      - "Parse council and committee inventories"
+      - "Estimate reach and find precedent"
+    steps:
+      - "Classify member_unit as company | individual | mixed | not_stated from the membership page's own words."
+      - "Parse the member directory where public into named_employers[] with a count."
+      - "Extract the council, committee and society inventory as candidate sub-body routes."
+      - "Extract stated audience composition verbatim where present."
+      - "Test: a practitioner society resolves to member_unit=individual; a trade association resolves to company."
+    acceptance: >
+      A practitioner society resolves to member_unit=individual. A company-member
+      trade association resolves to company. Both cite spans.
+
+  - id: E5.S6
+    title: "W9 Auditor — independent second-model verification"
+    size: M
+    priority: 0
+    depends: [E5.S2, E5.S4]
+    description: >
+      Re-extracts from the same snapshot with a different model and a different
+      prompt, then diffs. Same model twice correlates its own errors, which is
+      the whole reason to use a different one.
+    files: [src/finder/extract/w9_audit.py, tests/test_audit.py]
+    tasks:
+      - "Second extraction with a different model"
+      - "Field-level diff on decision-bearing fields"
+      - "Quarantine on disagreement"
+    steps:
+      - "Define DECISION_BEARING = {route_type, route_url, deadline, owner.name, member_unit, relationship_nature, trigger.kind, trigger.date}."
+      - "Re-extract using a different model and a differently-worded prompt."
+      - "Diff only decision-bearing fields; ignore prose differences."
+      - "Any disagreement sets status=quarantined with the diff attached; the record is not published."
+      - "Seed the evaluation set with 20 deliberately fabricated fields."
+      - "Test: >=95% of seeded fabrications quarantined; false-quarantine rate <=10%."
+    acceptance: >
+      >=95% of seeded fabrications quarantined, with a false-quarantine rate
+      <=10% on clean records.
+
+# ─────────────────────────────────────────────────────────────────────────────
+- id: E6
+  title: "Resolution and cross-family linking"
+  priority: 1
+  description: >
+    Dedupe before every write, and link the four families to each other. The
+    linking is where one-to-many compounding actually happens.
+  stories:
+
+  - id: E6.S1
+    title: "W7 resolve: insert, merge or reject-duplicate"
+    size: M
+    priority: 1
+    depends: [E1.S4, E5.S2]
+    description: >
+      Every draft is resolved before it is written. Unique IDs never proved
+      unique opportunities in the predecessor system, which is how it ended up
+      more than half duplicates.
+    files: [src/finder/resolve/w7_resolve.py, tests/test_resolve.py]
+    tasks:
+      - "Resolution ladder"
+      - "Merge policy preserving the richer record"
+      - "Rejection with a recorded reason"
+    steps:
+      - "Ladder in order: canonical domain -> normalised name and aliases -> series_key -> occurrence_key -> fuzzy match."
+      - "On merge, keep the record with more populated decision-bearing fields; append evidence from both; never drop a founder mark."
+      - "Genuinely distinct mechanisms at one organization stay separate; chapters of a national body are separate organizations."
+      - "Record every rejection with reason and the id it duplicated."
+      - "Test: the same event reached via three different URLs produces one route."
+    acceptance: >
+      One event reached via three URLs yields exactly one route, and the
+      resolution reason is recorded.
+
+  - id: E6.S2
+    title: "Cross-family linking"
+    size: M
+    priority: 1
+    depends: [E6.S1]
+    description: >
+      A company named on a channel's client roster becomes an employer reachable
+      through that channel. When a trigger later fires there, it surfaces as
+      CHANNEL_INTRO with base 5 because a way in already exists. Without the
+      CHANNEL family this link cannot exist at all.
+    files: [src/finder/resolve/link.py, tests/test_link.py]
+    tasks:
+      - "Promote named employers on channel rosters to employer rows"
+      - "Set reached_via_route_id"
+      - "Upgrade EMPLOYER route_type when a channel path exists"
+    steps:
+      - "On writing a CHANNEL route with named_employers[], upsert each as an employer with reached_via_route_id set to that channel route."
+      - "When W14 attaches a trigger to an employer that has reached_via_route_id, set the EMPLOYER route_type to CHANNEL_INTRO and name the channel in the row."
+      - "When a person is extracted from a channel's leadership page, link them to both the organization and the channel route."
+      - "Test: seed a channel with a client roster, fire a trigger at one client, assert route_type==CHANNEL_INTRO and the channel is named."
+    acceptance: >
+      A trigger at a company on a channel roster produces an EMPLOYER route typed
+      CHANNEL_INTRO naming the channel.
+
+  - id: E6.S3
+    title: "M1 exclusion check before every write"
+    size: S
+    priority: 0
+    depends: [E6.S1, E1.S6]
+    description: >
+      The never-ask-me-twice guarantee. Matching on domain as well as name is what
+      fixes the observed failure: twelve rows of a permanently rejected
+      organization survived in the predecessor system under a name variant.
+    files: [src/finder/resolve/exclusions.py, tests/test_exclusions.py]
+    tasks:
+      - "Match candidates against the rejection register"
+      - "Reject with the rule cited, retaining the record"
+    steps:
+      - "Before any write, check normalize_org(name) and registrable domain against the rejection table."
+      - "On match, store the route in LIBRARY with status=excluded, the rule_id and the founder's stated reason. Never delete."
+      - "Scope rules by family: a ROOM rejection does not exclude a CHANNEL route at the same organization."
+      - "Test with the real case: 'South Carolina Manufacturers Council' is blocked by the rejection recorded against 'South Carolina Manufacturers & Commerce' via shared domain."
+    acceptance: >
+      A rejected organization appearing under a name variant that shares a domain
+      is blocked, and the blocking rule is cited on the retained record.
+
+# ─────────────────────────────────────────────────────────────────────────────
+- id: E7
+  title: "Scoring"
+  priority: 0
+  description: >
+    Deterministic and fully decomposable (ADR-006). Same inputs, same numbers,
+    every time; every rank traceable to fields and spans.
+  stories:
+
+  - id: E7.S1
+    title: "Rubric functions, one per dimension"
+    size: M
+    priority: 0
+    depends: [E0.S2, E5.S2]
+    description: >
+      Each dimension is a pure function from extracted fields to 0-5 against the
+      written anchors in docs/00-build-spec.md section 06.
+    files: [src/finder/score/rubrics.py, tests/test_rubrics.py]
+    tasks:
+      - "Implement all eight rubrics"
+      - "Unit-test every anchor value"
+    steps:
+      - "Implement employer_presence, relationship_depth, trigger_strength, reach, subject_proximity, sector_match, repeatability, precedent, access_warmth."
+      - "trigger_strength applies the exponential decay from config/families.yaml triggers."
+      - "access_warmth rolls up as the BEST known path, never an average — one strong relationship opens a door and must not be diluted."
+      - "Each function returns (score, reason) so the score is explainable."
+      - "Test every anchor value for every rubric, including the boundaries."
+    acceptance: >
+      Every rubric is pure and unit-tested at every anchor. access_warmth rolls
+      up as max, not mean, proven by test.
+
+  - id: E7.S2
+    title: "FIT, ROUTE and CONFIDENCE with component breakdown"
+    size: M
+    priority: 0
+    depends: [E7.S1]
+    description: >
+      Three numbers, never blended. Every one decomposes into its components and
+      the spans behind them.
+    files: [src/finder/score/w8_score.py, tests/test_score.py]
+    tasks:
+      - "Family-specific weighted FIT"
+      - "ROUTE from base and openness"
+      - "CONFIDENCE from evidence, completeness and recency"
+      - "Property tests"
+    steps:
+      - "FIT = round(100 * sum(weight[family][d] * score[d] / 5) / sum(weight[family][d]))."
+      - "ROUTE = round(100 * (route_base / 5) * openness)."
+      - "CONFIDENCE per config/weights.yaml confidence block."
+      - "Persist components as JSON on the score row, plus config_hash."
+      - "Property tests with hypothesis: FIT is monotonic in each dimension; all outputs stay within 0-100; identical inputs give byte-identical output."
+      - "Assert geography appears nowhere in any weight set."
+    acceptance: >
+      Byte-identical output for identical inputs. Every number decomposes to
+      components. Geography contributes nothing to any score.
+
+  - id: E7.S3
+    title: "Surface routing and sort"
+    size: S
+    priority: 0
+    depends: [E7.S2]
+    description: >
+      Thresholds gate quality, never quantity. If four hundred routes clear the
+      bar, four hundred appear.
+    files: [src/finder/score/routing.py, tests/test_routing.py]
+    tasks:
+      - "Assign BEST, WORTH A LOOK or LIBRARY"
+      - "Sort and pin"
+    steps:
+      - "BEST requires fit>=65 and route>=50 and confidence>=70 and route_url is not null."
+      - "WORTH A LOOK requires fit>=65 and any of the other conditions failing."
+      - "Everything else is LIBRARY, retained and searchable."
+      - "Sort within family by fit * route / 100 descending."
+      - "Pin above the sort anything whose deadline or next_occurrence is within 21 days, or whose trigger is under 30 days old."
+      - "Test: raising the thresholds shrinks BEST; NO code path caps list length. Assert with 500 synthetic passing routes that all 500 appear."
+    acceptance: >
+      500 synthetic routes clearing the bar all appear. No code path truncates
+      the list.
+
+# ─────────────────────────────────────────────────────────────────────────────
+- id: E8
+  title: "Question generation"
+  priority: 1
+  description: >
+    For high-FIT routes that failed the BEST gate, write exactly one thing: the
+    single blocking unknown, who would know it, and a ready-to-send draft.
+  stories:
+
+  - id: E8.S1
+    title: "W10 single blocking question selection"
+    size: M
+    priority: 1
+    depends: [E7.S3]
+    description: >
+      Never a generic instruction to research an organization. In the predecessor
+      system 411 of 512 human-research rows shared one boilerplate sentence.
+    files: [src/finder/ask/w10_questions.py, tests/test_questions.py]
+    tasks:
+      - "Identify the field that would flip the decision"
+      - "Render it as a specific question"
+    steps:
+      - "For each WORTH A LOOK route, compute which single missing field, if resolved, would most raise FIT*ROUTE above the BEST bar."
+      - "Render a question naming that field concretely, never a category."
+      - "Attach why it matters, what evidence would resolve it, and what decision it changes."
+      - "Test: no two routes in a run share an identical question string unless the routes are genuinely identical."
+    acceptance: >
+      Exactly one question per row, naming the specific field that would flip the
+      decision. Boilerplate repetition is caught by test.
+
+  - id: E8.S2
+    title: "Target selection and draft message"
+    size: M
+    priority: 1
+    depends: [E8.S1]
+    description: >
+      A question with no addressee is not actionable. The system drafts; Art sends.
+      It never sends anything itself.
+    files: [src/finder/ask/targets.py, src/finder/ask/templates/, tests/test_targets.py]
+    tasks:
+      - "Choose the best-informed named person"
+      - "Draft an email or call script"
+    steps:
+      - "Prefer, in order: a person with a programming or partnership title at the organization; then a named staff contact; then a published general contact."
+      - "Draft from a template that states who Art is, what he is asking, and explicitly does not request a slot — it asks about the route."
+      - "Include the founder's own framing of Capability Engineering from config/thesis.yaml sbt_context."
+      - "Mark the draft clearly as a draft. Nothing is ever sent by the system."
+      - "Test: the GaMEP fixture yields the provider question addressed to a named GaMEP person with a draft."
+    acceptance: >
+      GaMEP yields the provider question addressed to a named person, with a
+      draft message, and nothing is sent.
+
+# ─────────────────────────────────────────────────────────────────────────────
+- id: E9
+  title: "Output surface"
+  priority: 1
+  description: >
+    Google Sheets via the existing Apps Script bridge (ADR-011). The current sheet
+    has no freeze panes, no autofilter, and validation covering 35 of 251 rows.
+    This epic fixes all three.
+  stories:
+
+  - id: E9.S1
+    title: "Sheet writer through the bridge"
+    size: M
+    priority: 1
+    depends: [E7.S3, E8.S2]
+    description: >
+      Writes the ranked lists without ever touching a founder-owned cell.
+      Verification is by read-back, not by trusting the write response — the
+      bridge has been observed returning success for writes that did not happen
+      as reported.
+    files: [src/finder/output/sheets.py, src/finder/output/w11_brief.py, tests/test_sheets.py]
+    tasks:
+      - "Bridge client with retry and redirect handling"
+      - "Write the four lists grouped by family"
+      - "Read-back verification"
+    steps:
+      - "POST with `curl -sL URL --data @file` semantics — never force POST replay on a redirect."
+      - "Batch writes to ~60 items; set generous timeouts; upserts are idempotent by id so a client timeout is retried safely after a read-back."
+      - "Never write columns in the founder-owned set."
+      - "After every write, GET the range back and assert the exact expected content and that founder cells are unchanged."
+      - "Treat the response status field as unreliable; only a read-back counts."
+      - "Test against a fake bridge: a write that silently drops rows is caught by read-back."
+    acceptance: >
+      Read-back confirms the written content and zero founder-owned cell changes.
+      A silently dropped write fails the run.
+
+  - id: E9.S2
+    title: "Sheet ergonomics: freeze panes, autofilter, full-range validation"
+    size: S
+    priority: 1
+    depends: [E9.S1]
+    description: >
+      Measured defects in the current sheet: zero of 17 tabs freeze headers, zero
+      set an autofilter, and the founder dropdowns cover rows 6-40 of a 251-row
+      queue, leaving 216 rows free-typed.
+    files: [src/finder/output/sheets_format.py, tests/test_sheets_format.py]
+    tasks:
+      - "Freeze the header row on every tab"
+      - "Set autofilter across the data range"
+      - "Extend data validation to the full data range"
+    steps:
+      - "Freeze at the real header row — row 5 on most tabs, row 3 on the two newest."
+      - "Set autofilter over the header row through the last data row."
+      - "Apply data validation to the entire data range, recomputed on every write as the range grows."
+      - "Set wrap and a sane row height on long-text columns."
+      - "Test: after a write of N rows, validation covers exactly N rows, not a fixed range."
+    acceptance: >
+      Headers frozen, filters on, and dropdowns covering every data row — verified
+      after a write that grows the range.
+
+  - id: E9.S3
+    title: "Feedback columns adjacent to row identity"
+    size: S
+    priority: 1
+    depends: [E9.S2]
+    description: >
+      In the predecessor sheet the feedback columns sat at the far right of a
+      25-column tab, outside the merged header block, 8-13 characters wide, with
+      wrap off — and were used zero times out of 251 rows. The surface must sit
+      where the decision is made.
+    files: [src/finder/output/sheets_format.py, tests/test_feedback_cols.py]
+    tasks:
+      - "Place mark columns beside the organization"
+      - "Real dropdowns, adequate width, wrap on"
+    steps:
+      - "Order columns so the mark columns follow the target name directly, before the research payload."
+      - "Set widths so the dropdown values are readable without resizing."
+      - "Attach the controlled vocabularies as real data validation, not caption text."
+      - "Include a 'do you know anyone here?' column — this is the only input for access_warmth, which the system cannot research."
+      - "Test: mark columns are within the first six columns and carry validation."
+    acceptance: >
+      Mark columns sit within the first six columns, carry real dropdowns, and
+      include the relationship question.
+
+  - id: E9.S4
+    title: "Geography facet: drive time, sort and filter"
+    size: S
+    priority: 2
+    depends: [E9.S1]
+    description: >
+      Geography is a facet, never a score. Toggling a distance filter must change
+      the view and change no ranking.
+    files: [src/finder/output/geo.py, tests/test_geo.py]
+    tasks:
+      - "Compute drive time from Athens once per location"
+      - "Expose as a sortable, filterable column"
+    steps:
+      - "Compute drive_time_minutes from the home base for each distinct location; cache by location."
+      - "Write city, state, scope and drive time as display columns."
+      - "Provide a 'drivable' boolean derived from the configured threshold."
+      - "Test: changing the drivable threshold changes the filter and leaves every FIT unchanged."
+    acceptance: >
+      Toggling the distance filter reorders the view and alters no score, proven
+      by asserting FIT values are identical before and after.
+
+  - id: E9.S5
+    title: "NEW and CHANGED feeds and the run report"
+    size: M
+    priority: 1
+    depends: [E9.S1, E10.S1]
+    description: >
+      Nothing should have to be re-read week to week. The run report is also where
+      failures and truncation surface — leading with what failed is a standing rule.
+    files: [src/finder/output/feeds.py, tests/test_feeds.py]
+    tasks:
+      - "NEW and CHANGED tabs"
+      - "Run report content"
+    steps:
+      - "NEW: routes first written this run. CHANGED: routes with a signal since the last run."
+      - "Run report: harvested by source class, gate and rerank survival counts, quarantines with reasons, routes written by family, cost by provider, cost per good route, and not_reached[]."
+      - "Lead the report with anything that failed."
+      - "Test: a run with a quarantine and a truncation surfaces both in the report."
+    acceptance: >
+      The report states harvest by source, precision counts, quarantines and
+      not_reached, and leads with failures.
+
+# ─────────────────────────────────────────────────────────────────────────────
+- id: E10
+  title: "Signals and triggers"
+  priority: 2
+  description: >
+    Catching a call the week it opens rather than the week after it closes, and
+    catching a company the month its problem appears.
+  stories:
+
+  - id: E10.S1
+    title: "W6 ChangeWatcher over watched URLs"
+    size: M
+    priority: 2
+    depends: [E2.S1, E6.S1]
+    description: >
+      A change never updates status directly. It emits a signal and re-queues the
+      page for extraction, so status changes always flow through verification.
+    files: [src/finder/harvest/w6_changes.py, tests/test_w6.py]
+    tasks:
+      - "Watch list maintenance"
+      - "Diff detection and signal emission"
+    steps:
+      - "Watch list: every active route's route_url and evidence_url, every committee page, and closed cycles inside their expected reopen window."
+      - "Compare content hash; on change, classify the signal kind (opened, closed, date_moved, owner_changed, new_content)."
+      - "Emit a signal row with previous and current values, then re-queue for W3."
+      - "Never set status from the signal alone."
+      - "Test: a fixture page whose CFP flips from closed to open emits kind=opened and re-queues extraction."
+    acceptance: >
+      A CFP flipping open emits kind=opened within a day and re-queues extraction,
+      without changing status directly.
+
+  - id: E10.S2
+    title: "W14 TriggerWatcher over award and announcement feeds"
+    size: L
+    priority: 2
+    depends: [E3.S5, E6.S2]
+    description: >
+      Source class 9. Creates the EMPLOYER family's reason to exist: something
+      just changed at a named company.
+    files: [src/finder/harvest/w14_triggers.py, tests/test_w14.py]
+    tasks:
+      - "Award API polling"
+      - "Announcement feed monitoring"
+      - "Employer and trigger creation"
+    steps:
+      - "Poll award APIs on a rolling window since the last run."
+      - "Monitor configured economic-development and company newsroom pages via change detection."
+      - "For each hit, resolve or create the employer, then attach a trigger with kind, what, occurred_on, source_url and the span."
+      - "Extract capability_implication ONLY if the source states it; otherwise not_stated."
+      - "Test: a seeded award becomes a dated trigger with its source span within one run."
+    acceptance: >
+      A seeded award appears as a dated trigger carrying its source span and
+      correct kind.
+
+  - id: E10.S3
+    title: "Nightly trigger decay"
+    size: S
+    priority: 2
+    depends: [E10.S2]
+    description: >
+      A trigger has a half-life. Stale ones fall out of the list on their own
+      rather than accumulating as noise.
+    files: [src/finder/score/decay.py, tests/test_decay.py]
+    tasks:
+      - "Recompute decayed strength nightly"
+      - "Demote below threshold"
+    steps:
+      - "strength = base * exp(-ln2 * age_days / half_life_days) per config/families.yaml."
+      - "Recompute for every active trigger nightly and store decayed_strength."
+      - "If the maximum decayed strength for an employer falls below 1.0, move its EMPLOYER routes to LIBRARY."
+      - "Test: a 400-day-old contract award scores below 1.0 and its route leaves the list without human action."
+    acceptance: >
+      A 400-day-old trigger scores below 1.0 and its route drops to LIBRARY
+      automatically.
+
+# ─────────────────────────────────────────────────────────────────────────────
+- id: E11
+  title: "Learning loop"
+  priority: 1
+  description: >
+    Five mechanisms, staged by the data each needs. None is model training. All
+    are inspectable and reversible. The founder's marks are the only ground truth
+    in the system.
+  stories:
+
+  - id: E11.S1
+    title: "Mark ingestion from the sheet"
+    size: M
+    priority: 1
+    depends: [E9.S3, E1.S3]
+    description: >
+      Reads founder marks in and never writes them back. A re-run must never
+      overwrite a mark — the predecessor system repeatedly destroyed his work
+      this way.
+    files: [src/finder/learn/ingest.py, tests/test_mark_ingest.py]
+    tasks:
+      - "Read mark columns and upsert founder_mark"
+      - "Capture relationship answers as person rows"
+      - "Idempotency"
+    steps:
+      - "Read the mark columns by header name, never by fixed index — a column-index assumption caused two real bugs in the predecessor system."
+      - "Upsert founder_mark keyed on (route_id, marked_at); never update an existing mark."
+      - "When the relationship column is answered, create or update a person row with known_to_art set, and upgrade the route to WARM_PATH where applicable."
+      - "Test: re-running ingestion twice produces the same rows and modifies nothing."
+    acceptance: >
+      Marks land in founder_mark. Re-running never overwrites a mark. Column
+      lookup is by header name, proven by a test that reorders columns.
+
+  - id: E11.S2
+    title: "M1 exclusion rules from marks"
+    size: S
+    priority: 1
+    depends: [E11.S1, E6.S3]
+    description: >
+      A drop verdict writes a rule keyed on normalised name AND domain. Seeded
+      from the nine existing permanent rejections in E1.S6.
+    files: [src/finder/learn/rules.py, tests/test_m1.py]
+    tasks:
+      - "Rule creation on drop verdicts"
+      - "Family scoping"
+    steps:
+      - "On a DROP_TARGET or DO_NOT_SURFACE mark, insert a rejection row with match_name, match_domain, family scope, reason and created_from mark id."
+      - "Scope by family: dropping a room does not exclude a channel at the same organization."
+      - "Test: a drop mark produces a rule that blocks the next candidate under a name variant sharing the domain."
+    acceptance: >
+      A drop mark immediately blocks future candidates matching by name or domain,
+      scoped to the family it was made in.
+
+  - id: E11.S3
+    title: "M2 pattern induction with approval"
+    size: L
+    priority: 1
+    depends: [E11.S1]
+    description: >
+      Association-rule induction over an attribute signature. This is the
+      difference between a blacklist and a system that learns — and it produces a
+      real rule on day one from decisions the founder has already made.
+    files: [src/finder/learn/induce.py, tests/test_m2.py]
+    tasks:
+      - "Signature computation"
+      - "Support and confidence thresholds"
+      - "English rendering with impact preview"
+      - "Approval workflow"
+    steps:
+      - "signature(route) = (family, route_type, member_unit, org_type, format_class, sector, marker_combo, delivery_model)."
+      - "For each attribute-value pair: count negatives and positives among marks."
+      - "Propose when negatives >= 3 and positives <= 1; action is EXCLUDE if confidence > 0.9 else DEMOTE."
+      - "Render the rule in plain English, with the marks it would have caught and the live routes it would affect now."
+      - "Write proposals to a review tab; apply only on founder approval; record who approved and when."
+      - "Test with the real historical case: the four rejections sharing member_unit=individual (PMI Atlanta, NCMA East Tennessee, USGIF, SAME Atlanta) produce a proposed rule with support 4, zero counterexamples, and a non-empty impact preview."
+    acceptance: >
+      From the migrated marks alone, the system proposes the
+      member_unit=individual rule with its support, counterexamples and impact
+      preview, and applies nothing without approval.
+
+  - id: E11.S4
+    title: "M3 constrained weight fitting with stability check"
+    size: L
+    priority: 2
+    depends: [E11.S1, E7.S2]
+    description: >
+      Six parameters fitted from tens of labels. Not a model. Bounded movement,
+      an explicit stability test, and founder approval before anything ships.
+    files: [src/finder/learn/weights.py, tests/test_m3.py]
+    tasks:
+      - "Build pairwise preferences"
+      - "Constrained optimisation"
+      - "Stability check and reporting"
+    steps:
+      - "P = {(a,b) : a marked good, b marked bad, same family, surfaced in the same week}."
+      - "Maximise sum of sigmoid(fit(a,w) - fit(b,w)) subject to: weights sum to 100; each in [0,40]; each within 20% of its current value."
+      - "Solve with scipy.optimize SLSQP — six parameters, seconds."
+      - "Report Kendall tau before and after, and the row-by-row top-25 diff."
+      - "Stability: perturb each weight +/-20%, recompute the top 25, and compute mean Jaccard. Below 0.70, refuse to ship and report instability."
+      - "Skip entirely and say so if fewer than 20 pairs exist for a family."
+      - "Test: a synthetic preference set recovers known weights; an unstable configuration is refused."
+    acceptance: >
+      Reports tau before and after, refuses to ship an unstable fit, and skips
+      with a stated reason when data is insufficient.
+
+  - id: E11.S5
+    title: "M5 source reallocation with a floor"
+    size: M
+    priority: 2
+    depends: [E12.S3]
+    description: >
+      Shift effort toward what the founder actually marks good — but never starve
+      a source, because that is how a system loses the ability to find anything new.
+    files: [src/finder/learn/allocate.py, tests/test_m5.py]
+    tasks:
+      - "Rolling good-rate per source class"
+      - "Proportional allocation with a floor"
+      - "Demotion, never silent disablement"
+    steps:
+      - "Compute good_rate and cost_per_good over a rolling four runs per source class."
+      - "Allocate next-run effort proportional to good_rate, subject to a floor of 5% per class from config."
+      - "A class below 0.05 good-rate for four consecutive runs is demoted to monthly and flagged in the run report."
+      - "Never disable a class silently."
+      - "Test: a zero-yield class is demoted and flagged but still receives its floor allocation."
+    acceptance: >
+      Allocation tracks yield, no class falls below the floor, and demotions are
+      reported rather than silent.
+
+  - id: E11.S6
+    title: "Outcome capture"
+    size: M
+    priority: 2
+    depends: [E11.S1]
+    description: >
+      What actually happened after Art was in a room is the strongest signal the
+      system will ever receive — stronger than any web evidence. The predecessor
+      system had zero outcome records in its entire lifetime.
+    files: [src/finder/learn/outcomes.py, tests/test_outcomes.py]
+    tasks:
+      - "Outcome column on the review surface"
+      - "Propagation to the archetype"
+    steps:
+      - "Add an outcome field to the mark surface: what happened, in one line."
+      - "Attach it to the route and to the signature computed in M2."
+      - "Weight outcome-bearing marks above disposition-only marks in M3's preference set."
+      - "Test: an outcome on one route raises the ranking of unmarked routes sharing its signature."
+    acceptance: >
+      An outcome attaches to its route and measurably influences routes sharing
+      its archetype.
+
+# ─────────────────────────────────────────────────────────────────────────────
+- id: E12
+  title: "Evaluation harness"
+  priority: 1
+  description: >
+    You cannot improve what you do not measure. The failure mode of every
+    predecessor version was that nobody knew which sources produced junk.
+  stories:
+
+  - id: E12.S1
+    title: "Labelled evaluation sets"
+    size: L
+    priority: 1
+    depends: [E5.S2, E4.S1]
+    description: >
+      Four labelled sets, versioned in the repo, reviewed by the founder wherever
+      judgment rather than fact is involved.
+    files: [tests/fixtures/labelled/*.json, docs/labelling-guide.md]
+    tasks:
+      - "Extraction set"
+      - "Dedupe set"
+      - "Gate set"
+      - "Rerank set including near-misses"
+    steps:
+      - "Extraction: 100 pages with hand-labelled expected field values, including thin pages and off-domain forms."
+      - "Dedupe: the 500-row set from E1.S4."
+      - "Gate: 200 pages labelled pass or reject with the reason, including real false positives such as the EMS conference."
+      - "Rerank: 200 candidates labelled good, near-miss or junk. Near-misses are the valuable ones and must be over-sampled."
+      - "Write docs/labelling-guide.md so labels stay consistent across labellers and over time."
+      - "Founder reviews the gate and rerank labels — those encode his judgment, not fact."
+    acceptance: >
+      Four sets exist, each >=100 items, versioned in the repo, with a labelling
+      guide. Judgment sets are founder-reviewed.
+
+  - id: E12.S2
+    title: "Metrics and a CI regression gate"
+    size: M
+    priority: 1
+    depends: [E12.S1]
+    description: >
+      A prompt or config change that degrades a measured metric must fail the
+      build, not be discovered three weeks later in the output.
+    files: [src/finder/eval/harness.py, src/finder/eval/metrics.py, .github/workflows/eval.yml]
+    tasks:
+      - "Harness running all four sets"
+      - "Baselines committed and compared"
+      - "CI gate"
+    steps:
+      - "Harness runs each set and emits precision, recall, field accuracy and span validity."
+      - "Commit baseline results as JSON; compare each run against them."
+      - "Fail CI on a regression beyond a configured tolerance."
+      - "Run the harness on any change to prompts, lexicon, or config."
+      - "Test: a deliberately degraded prompt fails the gate."
+    acceptance: >
+      A deliberately degraded prompt fails CI with a named metric and the delta.
+
+  - id: E12.S3
+    title: "Per-source precision reporting"
+    size: S
+    priority: 1
+    depends: [E4.S4, E9.S5]
+    description: >
+      Yield by source class is what makes M5 reallocation possible and what stops
+      a junk source from quietly consuming the budget.
+    files: [src/finder/eval/sources.py, tests/test_source_metrics.py]
+    tasks:
+      - "Track the funnel per source class"
+      - "Report good-rate and cost per good route"
+    steps:
+      - "Per source_class and query_family, record: candidates_generated, survived_gate, survived_rerank, written, marked_good."
+      - "Compute gate precision, rerank precision, good-rate and cost per good route."
+      - "Emit in the run report and persist for the rolling window M5 needs."
+      - "Test: a synthetic run produces correct funnel arithmetic."
+    acceptance: >
+      Every run emits good-rate and cost-per-good-route by source class, and the
+      history is persisted.
+
+# ─────────────────────────────────────────────────────────────────────────────
+- id: E13
+  title: "Operations"
+  priority: 2
+  description: >
+    Scheduling, alerting, cost control and the runbook. The system must survive
+    running unattended and must fail loudly rather than quietly.
+  stories:
+
+  - id: E13.S1
+    title: "Scheduling for weekly, daily and monthly entry points"
+    size: S
+    priority: 2
+    depends: [E0.S4]
+    description: >
+      One cron entry per cadence. Timezone explicit and DST-safe.
+    files: [src/finder/run.py, .github/workflows/scheduled.yml, docs/deployment.md]
+    tasks:
+      - "Entry points"
+      - "Scheduler configuration"
+    steps:
+      - "python -m finder.run {weekly|daily|monthly|replay}."
+      - "Configure the scheduler with an explicit IANA timezone so DST needs no manual adjustment."
+      - "Document both a GitHub Actions and a Cloud Scheduler plus Cloud Run Job path in docs/deployment.md."
+      - "Ensure the database is restored from durable storage at start and backed up at end when running in ephemeral compute."
+    acceptance: >
+      All three cadences run unattended on schedule with an explicit timezone,
+      and the database survives an ephemeral runtime.
+
+  - id: E13.S2
+    title: "Alerting on failure and anomaly"
+    size: M
+    priority: 2
+    depends: [E0.S5, E9.S5]
+    description: >
+      A silent failure is the worst outcome, because it looks identical to a quiet
+      week.
+    files: [src/finder/ops/alerts.py, tests/test_alerts.py]
+    tasks:
+      - "Failure alert"
+      - "Anomaly detection"
+    steps:
+      - "Alert on: run failure, zero routes written, quarantine rate above a threshold, spend above a threshold, and any founder-owned write attempt."
+      - "Include the run_id and the first error in the alert body."
+      - "Test: each condition fires exactly once per run."
+    acceptance: >
+      A failed run, a zero-yield run, a quarantine spike and a spend spike each
+      produce exactly one alert.
+
+  - id: E13.S3
+    title: "Per-run budget with graceful truncation"
+    size: M
+    priority: 2
+    depends: [E0.S5, E0.S4]
+    description: >
+      A run that hits its budget stops, writes everything it has, and reports what
+      it did not reach. It never dies holding unwritten work.
+    files: [src/finder/ops/budget.py, tests/test_budget.py]
+    tasks:
+      - "Budget tracking against the cost ledger"
+      - "Graceful stop"
+    steps:
+      - "Configure a per-run dollar budget; check it before each expensive call."
+      - "On exhaustion, stop issuing new work, complete in-flight items, flush all writes, and populate not_reached."
+      - "Report the budget stop prominently at the top of the run report."
+      - "Test: a run with a tiny budget still writes partial results and reports truncation."
+    acceptance: >
+      A budget-limited run writes what it completed and reports exactly what it
+      did not reach.
+
+  - id: E13.S4
+    title: "Operations runbook"
+    size: S
+    priority: 3
+    depends: [E13.S2]
+    description: >
+      Documented recovery for every failure mode, so a new operator can diagnose
+      without reading source.
+    files: [docs/runbook.md]
+    tasks:
+      - "Write the runbook from the delivery plan's failure table"
+    steps:
+      - "Cover: run failed with nothing written; zero new routes; quarantine spike; duplicates appearing; spend spike; a founder mark disappeared; a rejected organization reappeared; ranking looks wrong."
+      - "For each: symptom, likely cause, diagnostic command, remedy."
+      - "Include how to roll back a config version using config_hash."
+    acceptance: >
+      Every failure mode in the delivery plan has a documented diagnostic and
+      remedy with a runnable command.

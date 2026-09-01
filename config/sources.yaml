@@ -1,0 +1,116 @@
+# The fourteen source classes, their harvest worker, and cadence.
+#
+# Classes 1-10 are DIRECT evidence: what an organization says about itself.
+# Classes 11-14 are INDIRECT evidence: traces other people leave.
+#
+# Governing principle: indirect evidence of ACCESS beats direct evidence of
+# EXISTENCE. One post saying "delivered a workshop at X" proves X programs
+# outside experts. No amount of reading X's website proves that.
+version: 1
+
+sources:
+  - id: 1
+    name: Network templates
+    kind: direct
+    worker: W1
+    cadence: monthly
+    method: Fetch each network's own node directory; extract node list and canonical domains.
+
+  - id: 2
+    name: Organization programming pages
+    kind: direct
+    worker: W2
+    cadence: weekly_tiered
+    method: One map call per domain with PROGRAMMING_PATHS. No crawl.
+
+  - id: 3
+    name: Association management systems
+    kind: direct
+    worker: W2
+    cadence: weekly
+    method: Predictable hosts and paths from hosts.yaml ams_patterns - events, committees, member directories.
+
+  - id: 4
+    name: Submission platforms
+    kind: direct
+    worker: W5
+    cadence: weekly
+    method: Public browse and search by sector keyword; reverse-resolve any submission host found by W3.
+
+  - id: 5
+    name: Event platforms
+    kind: direct
+    worker: W5
+    cadence: weekly
+    method: APIs and structured queries by organizer, geography and keyword.
+
+  - id: 6
+    name: Funded-work portals
+    kind: direct
+    worker: W5
+    cadence: daily
+    method: Grants.gov and SAM.gov APIs, state procurement. Filtered by lexicon, not NAICS alone.
+
+  - id: 7
+    name: Semantic discovery
+    kind: direct
+    worker: W1
+    cadence: monthly
+    method: Semantic search from thesis text; graph expansion from partner, sponsor and member lists already fetched.
+
+  - id: 8
+    name: Provider and partner registries
+    kind: direct
+    worker: W13
+    cadence: weekly
+    method: Map with PARTNER_PATHS; parse published provider directories, which name the slot, the criteria, the approver and the incumbents.
+    note: Highest-leverage addition for the CHANNEL family and the cheapest to build.
+
+  - id: 9
+    name: Trigger feeds
+    kind: direct
+    worker: W14
+    cadence: daily
+    method: Award APIs, state and regional economic-development announcements, company newsrooms, business journals.
+
+  - id: 10
+    name: People surfaces
+    kind: direct
+    worker: W4
+    cadence: continuous
+    method: Extracted as a by-product of every page fetch. Never a separate crawl. The founder's own network is entered by him and never scraped.
+
+  - id: 11
+    name: Practitioner traces
+    kind: indirect
+    worker: W15
+    cadence: weekly
+    method: Semantic search on trace_phrasings crossed with lexicon classes A and B; peer roster speaking histories; org newsletters and recaps.
+
+  - id: 12
+    name: Agenda archives
+    kind: indirect
+    worker: W15
+    cadence: monthly
+    method: Past-event pages and program PDFs including archive.org captures. Parse to session, speaker, affiliation, format.
+    note: The richest single artifact in the system.
+
+  - id: 13
+    name: Solicitation feeds
+    kind: indirect
+    worker: W5
+    cadence: daily
+    method: Grants.gov, SAM.gov, state procurement, foundation RFP pages. The abstract text says what the money is for.
+
+  - id: 14
+    name: Public minutes and packets
+    kind: indirect
+    worker: W15
+    cadence: monthly
+    method: Workforce board, EDA, chamber board and committee minutes. Programming is discussed here before it is published.
+
+# Organization tiering drives W2 and W13 cadence.
+tiering:
+  A: {cadence: weekly,    rule: "last FIT >= 65, or a founder PURSUE, or a seed network member"}
+  B: {cadence: biweekly,  rule: "last FIT 50-64"}
+  C: {cadence: monthly,   rule: "last FIT < 50, or never scored"}

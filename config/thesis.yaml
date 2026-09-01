@@ -1,0 +1,74 @@
+# Canonical description of an ideal opportunity, one per family.
+#
+# Embedded once and stored. Used as (a) a recall filter and (b) ONE feature of
+# the reranker. Never as the final score — the ranking must stay explainable and
+# decomposable, because the founder's judgment is the ground truth and he has to
+# be able to see why something ranked where it did and argue with it.
+version: 1
+
+sbt_context: >
+  Skill Bridge Talent sells Capability Engineering: turning a business goal into
+  the work, knowledge, skills, proficiency, evidence and human/AI roles required
+  to deliver it. Subject matter includes workforce and talent capability,
+  upskilling and reskilling, onboarding, time-to-competency, modernization and
+  automation readiness, expertise retention. Priority sectors are fintech and
+  payments, defense and the defense industrial base, supply chain and logistics,
+  manufacturing, and healthcare. The goal is client conversations and revenue,
+  reached by being present with employers consultatively - never hard selling.
+
+thesis:
+  ROOM: >
+    A recurring or dated gathering convened by a trusted host where employer
+    decision-makers are actually present: owners, C-suite, plant and site
+    leaders, VPs of operations, business-unit leaders. There is a real role
+    available beyond buying a ticket - a call for speakers, an education or
+    program committee, a named program owner, a workshop or lunch-and-learn slot,
+    a council seat, an SME pathway. The format allows interaction and
+    application rather than broadcast. The subject matter touches workforce
+    capability, time-to-competency, automation or AI readiness, modernization or
+    onboarding. Informal formats count fully: member socials, receptions,
+    breakfasts, luncheons, facility tours and peer forums are all valid rooms
+    when employers are in them.
+
+  CHANNEL: >
+    An organization that holds direct relationships with many employers and can
+    reach them without an event. It is contracted, funded or paid to work inside
+    employers, or it holds them as clients or company members. It delivers
+    through instructors, partners or approved third-party providers rather than
+    staff alone, so there is a slot to occupy. Examples of the shape: a
+    manufacturing extension partnership, a state customized-training system, a
+    work-based-learning intermediary, an employer collaborative, a trade
+    association with a member content channel, a bank or utility running
+    programming for its corporate clients. The prize is becoming part of how the
+    organization delivers, so its employer engagements become the route to
+    Capability Engineering work.
+
+  EMPLOYER: >
+    A specific company in a priority sector where something has just changed that
+    creates a capability problem: a plant expansion or new site, an automation or
+    robotics investment, an AI initiative, a defense contract award, a workforce
+    grant, a hiring surge, or a new COO or VP of Operations. The change is dated
+    and reported by a citable source. There is an identifiable problem owner and
+    ideally a warm path or an existing channel that already reaches them.
+
+  PERSON: >
+    A named individual who controls programming, partnerships, a budget or an
+    employer cohort - a program or education chair, a partnership lead, a
+    regional manager at an intermediary, an executive peer-group chair - or
+    someone already in the founder's network whose current seat opens a room, a
+    channel or an employer. Existing relationships outrank cold identification by
+    a wide margin, and the strength of a relationship is founder-entered, never
+    inferred from public data.
+
+# Practitioner roster for peer-trace mining (W15, source class 11).
+# Seeded manually, extended by the system as it finds people who speak in the
+# right rooms. Every venue on a peer's speaking history is a proven
+# outside-expert venue on this subject matter.
+practitioner_roster:
+  seed_query_shapes:
+    - consultants who deliver workforce capability workshops to manufacturers
+    - practitioners speaking on time-to-competency and workforce readiness
+    - speakers on AI adoption and work redesign for operations leaders
+    - facilitators of employer roundtables on upskilling and automation readiness
+  people: []      # populated by W15 peer mode and by founder additions
+  firms: []

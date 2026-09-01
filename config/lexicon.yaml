@@ -1,0 +1,117 @@
+# Marker classes for the precision gate.
+#
+# A page must hit >= min_classes distinct classes to survive. Precision comes
+# from CO-OCCURRENCE, not from any single term. This is why a broad
+# "call for speakers" search returns EMS conferences and a gated one does not:
+# the EMS page hits class E and nothing in class C.
+version: 1
+min_classes: 2
+
+classes:
+  A_subject_core:
+    - time-to-competency
+    - time to competence
+    - capability gap
+    - workforce capability
+    - upskilling
+    - reskilling
+    - workforce readiness
+    - onboarding
+    - time-to-productivity
+    - skills gap
+    - expertise retention
+    - knowledge transfer
+    - succession planning for expertise
+
+  B_subject_adjacent:
+    - automation readiness
+    - industry 4.0
+    - smart manufacturing
+    - ai adoption
+    - digital transformation
+    - technology adoption
+    - operational excellence
+    - modernization
+    - change management
+    - work redesign
+    - human-ai
+    - robotics adoption
+
+  C_audience:
+    - plant manager
+    - site leader
+    - chief operating officer
+    - vp of operations
+    - vice president of operations
+    - business owner
+    - general manager
+    - business unit leader
+    - operations executive
+    - transformation lead
+    - member companies
+    - employer members
+    - c-suite
+    - manufacturing leaders
+
+  D_format:
+    - workshop
+    - working session
+    - hands-on
+    - interactive session
+    - facilitated
+    - roundtable
+    - clinic
+    - lunch and learn
+    - lunch-n-learn
+    - breakout
+    - peer forum
+    - council meeting
+    - deep dive
+
+  E_access:
+    - call for speakers
+    - call for presentations
+    - call for proposals
+    - submit a session
+    - submit a proposal
+    - speaker interest
+    - education committee
+    - program committee
+    - speakers bureau
+    - subject matter expert
+    - become a provider
+    - approved provider
+    - partner with us
+    - request for proposals
+    - rfp
+    - rfq
+
+  N_negative:
+    - job seeker
+    - career fair
+    - resume workshop
+    - student chapter
+    - recruiting event
+    - staffing agency
+    - shrm
+    - talent acquisition
+    - nursing ceu
+    - continuing education credit for nurses
+
+# Observed precision order, highest first. Recorded as a reranker feature.
+# CE = employer audience + a published way in.
+strong_combinations: [CE, AE, CD, AC, BD]
+
+# Phrasings that indicate a practitioner trace (W15 TraceHunter, source class 11)
+trace_phrasings:
+  - delivered a workshop at
+  - delivered a session
+  - spoke to the
+  - presented at
+  - presenting at
+  - facilitated a session for
+  - honored to speak
+  - thanks for having me
+  - great session with
+  - joined the
+  - keynoted

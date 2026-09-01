@@ -1,0 +1,89 @@
+# FIT weights per family. Must sum to 100 within each family.
+#
+# Tuned by M3 (constrained weight fitting) against the founder's marks. Every
+# score row records the config hash that produced it, so any ranking change is
+# attributable and a bad fit is a one-line rollback.
+#
+# GEOGRAPHY IS DELIBERATELY ABSENT. It is a display facet and a sort key, never
+# an input to quality. A national event with employers in the room, a workshop
+# slot and the right sector is a top opportunity wherever it is.
+version: 1
+
+fit_weights:
+  ROOM:
+    employer_presence: 24
+    reach: 18
+    subject_proximity: 18
+    sector_match: 14
+    repeatability: 14
+    precedent: 12
+  CHANNEL:
+    relationship_depth: 30
+    reach: 26
+    subject_proximity: 18
+    sector_match: 12
+    repeatability: 10
+    precedent: 4
+  EMPLOYER:
+    trigger_strength: 32
+    subject_proximity: 22
+    sector_match: 18
+    access_warmth: 16
+    reach: 6
+    repeatability: 6
+  PERSON:
+    access_warmth: 40
+    reach: 28
+    subject_proximity: 14
+    sector_match: 12
+    repeatability: 6
+
+# Surface routing.
+# THESE ARE QUALITY BARS, NOT VOLUME CAPS. If 400 routes clear them, 400 appear.
+# The system never pre-selects a subset; the founder decides how many is enough.
+thresholds:
+  best:
+    fit_min: 65
+    route_min: 50
+    confidence_min: 70
+    require_route_url: true
+  worth_a_look:
+    fit_min: 65
+  pin_if_door_closes_within_days: 21
+
+confidence:
+  component_weights:
+    evidence_level: 0.50
+    field_completeness: 0.30
+    recency: 0.20
+  recency_factor:
+    within_7_days: 1.00
+    within_30_days: 0.80
+    within_90_days: 0.60
+    older: 0.30
+  evidence_level:
+    official_page_direct: 5
+    official_page_adjacent: 4
+    official_pdf_or_press: 3
+    reputable_third_party: 2
+    aggregator_or_directory: 1
+    inferred: 0
+
+# M3 weight-fitting guardrails
+weight_fitting:
+  min_marks_per_family: 20
+  max_delta_pct: 20
+  weight_bounds: [0, 40]
+  stability_min_jaccard: 0.70   # top-25 overlap under +/-20% perturbation
+
+# M5 source reallocation
+source_allocation:
+  floor_pct_per_class: 5        # never starve a source; that is how you stop finding new things
+  demote_if_good_rate_below: 0.05
+  demote_after_consecutive_runs: 4
+
+# Geography: facet only. Used for display, sorting and optional filtering.
+geography_facet:
+  home_base: "Athens, GA"
+  drivable_max_minutes: 180
+  display_order: [Athens, Atlanta, Savannah, Georgia, SC, AL, TN, FL, TX, WI, NY, National, Other]

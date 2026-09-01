@@ -1,0 +1,56 @@
+# Off-domain submission hosts.
+#
+# When a page links out to one of these, THE OUTBOUND LINK IS THE route_url,
+# not the page it was found on.
+#
+# Discovered the hard way 2026-09-01: the GSAE speaker form is a SurveyMonkey
+# link embedded in body text. Art went to gsae.org and could not find it,
+# because it is not on gsae.org.
+version: 1
+
+submission_hosts:
+  - surveymonkey.com
+  - docs.google.com/forms
+  - forms.gle
+  - forms.office.com
+  - sessionize.com
+  - papercall.io
+  - proposalspace.com
+  - conferencegrid.com
+  - oxfordabstracts.com
+  - xcdsystem.com
+  - openwater.com
+  - exordo.com
+  - jotform.com
+  - typeform.com
+  - wufoo.com
+  - formstack.com
+  - cognitoforms.com
+  - submittable.com
+  - smartsheet.com
+  - airtable.com
+  - cvent.com
+  - eventbrite.com
+
+# Association management systems. Their hosts and paths are predictable, which
+# is what makes chambers and trade associations enumerable rather than guessable.
+ams_patterns:
+  growthzone_chambermaster:
+    hosts: ["*.chambermaster.com", "business.*", "members.*"]
+    paths: ["/events", "/events/catgid/", "/list/", "/directory"]
+  memberclicks:
+    hosts: ["*.memberclicks.net"]
+    paths: ["/calendar", "/committees", "/member-directory"]
+  novi_ams:
+    hosts: ["*.novi.io", "*.novisolutions.com"]
+    paths: ["/events", "/directory"]
+  yourmembership:
+    hosts: ["*.site-ym.com", "*.yourmembership.com"]
+    paths: ["/events", "/members"]
+  personify:
+    hosts: ["*.personifycloud.com"]
+  impexium:
+    hosts: ["*.impexium.com"]
+  weblink:
+    hosts: ["*.weblinkconnect.com"]
+    paths: ["/events", "/directory"]

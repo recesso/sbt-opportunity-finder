@@ -1,0 +1,149 @@
+# Network seed registry — the highest-yield asset in the system.
+#
+# Each network is a template that replicates across N nodes. Solve the
+# programming or provider pattern once at one node, apply the identical
+# extraction to every peer.
+#
+# node_count_est is an ORDER-OF-MAGNITUDE PLANNING FIGURE ONLY, used to size a
+# harvest. W1 NetworkRegistrar establishes the real list from each network's own
+# directory, and THAT list is what the system uses. Never treat these numbers as
+# verified facts.
+version: 1
+
+networks:
+  - id: nist_mep
+    name: NIST Manufacturing Extension Partnership centers
+    directory_url: https://www.nist.gov/mep/centers
+    sectors: [manufacturing]
+    node_count_est: 51
+    tier: A
+    notes: >
+      Highest priority. Centers are contracted to work inside manufacturers, which
+      makes them relationship_depth 5 CHANNEL targets. Most publish a third-party
+      or approved-provider route. Validated example - GaMEP runs a statewide
+      lunch-and-learn circuit delivered by staff and partners.
+
+  - id: state_mfg_assns
+    name: State manufacturers associations (NAM affiliates)
+    directory_url: https://www.nam.org/state-associations/
+    sectors: [manufacturing]
+    node_count_est: 50
+    tier: A
+
+  - id: state_hospital_assns
+    name: State hospital associations (AHA affiliates)
+    directory_url: https://www.aha.org/about/state-hospital-associations
+    sectors: [health]
+    node_count_est: 46
+    tier: A
+
+  - id: himss_chapters
+    name: HIMSS chapters
+    directory_url: https://www.himss.org/membership-participate/chapters/
+    sectors: [health]
+    node_count_est: 60
+    tier: B
+
+  - id: ache_chapters
+    name: ACHE chapters
+    directory_url: https://www.ache.org/chapters
+    sectors: [health]
+    node_count_est: 78
+    tier: B
+
+  - id: ndia_chapters
+    name: NDIA chapters
+    directory_url: https://www.ndia.org/chapters
+    sectors: [defense]
+    node_count_est: 90
+    tier: A
+
+  - id: afcea_chapters
+    name: AFCEA chapters
+    directory_url: https://www.afcea.org/chapters
+    sectors: [defense]
+    node_count_est: 140
+    tier: B
+
+  - id: cscmp_roundtables
+    name: CSCMP roundtables
+    directory_url: https://cscmp.org/CSCMP/Connect/Local-Roundtables/
+    sectors: [supply_chain]
+    node_count_est: 40
+    tier: A
+
+  - id: ascm_chapters
+    name: ASCM / APICS chapters
+    directory_url: https://www.ascm.org/membership/chapters/
+    sectors: [supply_chain]
+    node_count_est: 150
+    tier: C
+
+  - id: state_bankers_assns
+    name: State bankers associations
+    directory_url: https://www.aba.com/about-us/state-associations
+    sectors: [fintech]
+    node_count_est: 50
+    tier: B
+
+  - id: regional_payments_assns
+    name: Regional payments associations (Nacha network)
+    directory_url: https://www.nacha.org/content/payments-associations
+    sectors: [fintech]
+    node_count_est: 8
+    tier: A
+
+  - id: tpm_collaboratives
+    name: US Chamber Foundation Talent Pipeline Management collaboratives
+    directory_url: https://www.uschamberfoundation.org/workforce/talent-pipeline-management
+    sectors: [cross]
+    node_count_est: null
+    tier: A
+
+  - id: eda_tech_hubs
+    name: EDA Tech Hubs
+    directory_url: https://www.eda.gov/funding/programs/regional-technology-and-innovation-hubs
+    sectors: [cross]
+    node_count_est: 31
+    tier: A
+
+  - id: state_training_systems
+    name: State customized-training systems
+    directory_url: null
+    sectors: [cross]
+    node_count_est: 30
+    tier: A
+    seed_members:
+      - {name: AIDT, state: AL, domain: aidt.edu}
+      - {name: LED FastStart, state: LA, domain: fastart.org}
+      - {name: Georgia Quick Start, state: GA, domain: georgiaquickstart.org}
+      - {name: NCEdge, state: NC, domain: null}
+    notes: >
+      No single national directory. Seeded from known members, then expanded via
+      graph traversal of partner pages and peer references.
+
+  - id: employer_intermediaries
+    name: Employer intermediaries and field builders
+    directory_url: null
+    sectors: [cross]
+    node_count_est: null
+    tier: A
+    seed_members:
+      - {name: GPS Education Partners, domain: gpsed.org}
+      - {name: Align Wisconsin, domain: null}
+      - {name: America Achieves, domain: americaachieves.org}
+      - {name: Jobs for the Future, domain: jff.org}
+      - {name: Enterprise Technology Association, domain: joineta.org}
+    notes: >
+      The CHANNEL family in its purest form. Named by the founder himself as the
+      one-to-many leverage he prioritises. Expand via each one's partner and
+      funder lists.
+
+  - id: ga_adjacent_chambers
+    name: Chambers with named industry councils, GA and adjacent states
+    directory_url: null
+    sectors: [cross]
+    node_count_est: 200
+    tier: B
+    notes: >
+      Enumerable via AMS host patterns in hosts.yaml rather than by search.
