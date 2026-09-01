@@ -1,7 +1,7 @@
 # CONTINUE HERE
 
-**Last updated:** 2026-09-01 · E0 complete · E1.S1, E1.S2, E1.S4 · E2.S1, E2.S2 · E5.S1.
-364 tests, 97% branch coverage, 74/74 mutations caught.
+**Last updated:** 2026-09-01 · E0 complete · E1.S1, E1.S2, E1.S4 · E2.S1, E2.S2, E2.S5 · E5.S1.
+426 tests, 97% branch coverage, 89/89 mutations caught.
 
 If you are a new session or a new engineer, read this file, then `CLAUDE.md`, then run `bd ready`.
 That is the whole orientation.
@@ -12,13 +12,13 @@ That is the whole orientation.
 
 | | |
 |---|---|
-| **Done** | E0.S1 tooling and CI · E0.S2 config · E0.S3 secrets and redaction · E0.S4 run harness · E0.S5 cost ledger · E1.S1 schema · E1.S2 repositories · E1.S4 dedupe keys · E2.S1 fetch · E2.S2 snapshots · E5.S1 extraction contract |
-| **Next** | `bd ready` → **E5.S2** (mechanism extractor — highest risk in the plan), **E4.S1** (marker gate), **E1.S3** (founder write guard), **E2.S3** (URL-inventory map) |
+| **Done** | E0.S1 tooling and CI · E0.S2 config · E0.S3 secrets and redaction · E0.S4 run harness · E0.S5 cost ledger · E1.S1 schema · E1.S2 repositories · E1.S4 dedupe keys · E2.S1 fetch · E2.S2 snapshots · E2.S5 URL inventory · E5.S1 extraction contract |
+| **Next** | `bd ready` → **E5.S2** (mechanism extractor — highest risk in the plan), **E4.S1** (marker gate), **E1.S3** (founder write guard), **E2.S3** (politeness) |
 | **Nothing is running** | No scheduled jobs, no data collected, no live database yet |
 
 ```bash
 make install
-make check      # lint + 364 tests, offline
+make check      # lint + 426 tests, offline
 make cov        # branch coverage, fails under 88%
 make audit      # breaks the code on purpose; every mutation must be caught
 bd ready
@@ -26,8 +26,8 @@ bd ready
 
 ## How this project judges its own tests
 
-`make audit` is not optional decoration. It runs in about three minutes and applies 74 specific mutations — each one a real bug a
-competent engineer could introduce — and fails if the suite does not notice. **A passing suite
+`make audit` is not optional decoration. It runs in about four minutes and applies 89 specific
+mutations — each one a real bug a competent engineer could introduce — and fails if the suite does not notice. **A passing suite
 proves nothing; a suite that catches deliberate sabotage proves something.** CI runs it on every
 push alongside a branch-coverage floor.
 
@@ -51,7 +51,8 @@ code moved out from under it — fix the mutation, do not delete it.
 - `src/finder/acquire/` — the fetch boundary. `providers/base.py` is the Protocol every
   external service sits behind; `providers/firecrawl.py` is the only file that knows the
   vendor's name; `fetch.py` is the cache; `snapshot.py` is the write-once store every
-  extraction reads from.
+  extraction reads from; `map.py` decides WHICH urls are worth fetching and records the term
+  that matched each one.
 - `src/finder/extract/schemas.py` — the extraction contract: the `Field` wrapper (value, span,
   source_url), the common schema, four family extensions, per-family `route_type` literals, and
   `extract_with_retry`, which retries once with the specific violations and then quarantines.
@@ -66,8 +67,8 @@ code moved out from under it — fix the mutation, do not delete it.
 
 ## What does not exist yet
 
-No workers, no live database, nothing scheduled. `acquire/` can fetch and store a page but
-nothing decides which pages to fetch. `harvest/`, `precision/`, `resolve/`, `score/`, `ask/`,
+No workers, no live database, nothing scheduled. `acquire/` can map a domain, fetch a page and
+store it, but nothing decides which organizations to map. `harvest/`, `precision/`, `resolve/`, `score/`, `ask/`,
 `output/`, `learn/` and `eval/` are still empty packages, and `extract/` holds the contract but
 not the extractor.
 
@@ -78,9 +79,10 @@ not the extractor.
    already exists in `src/finder/extract/schemas.py`; what is missing is the prompt, the snapshot
    handling, and the check that every span it returns actually appears in the snapshot. Build it
    against the three hand-verified routes below before anything else.
-2. **E2.S3 → E3** — the URL-inventory map and the recall harvesters. The fetch layer exists; what
-   is missing is the thing that decides *which* URLs to fetch. Recall, not filtering, is the
-   demonstrated failure: a broad keyword search returns EMS conferences and a woodworking expo.
+2. **E3 — the recall harvesters.** Acquisition can now map a domain and fetch its pages; nothing
+   yet decides *which organizations* to map. Recall, not filtering, is the demonstrated failure:
+   a broad keyword search returns EMS conferences and a woodworking expo. W1 (NetworkRegistrar)
+   is the first one and the highest leverage.
 3. **E1.S3** — the founder-owned write guard. The schema already separates the tables; this adds
    the runtime assertion and the audit trail.
 
@@ -141,6 +143,15 @@ Milestone M1 is the thinnest slice that produces a real ranked list:
 - **Snapshots are sharded by hash prefix.** A deviation from the backlog's one-line spec, recorded
   here rather than left to be discovered: they are retained forever, and a flat directory reaches
   five figures within months.
+
+- **The map records WHICH term matched, not just that something did.** A URL found by "call for
+  speakers" is a different animal from the same URL found by "blog", and `matched_term` is a
+  reranker feature. This is why matching is local rather than delegated to the provider's own
+  search: a provider that returns a ranked list cannot tell you why it ranked anything.
+- **Matching is word-bounded.** "council" firing on "councilman" would turn every civic page into
+  a council seat — substring matching is precisely how the predecessor's recall filled with noise.
+- **A domain nobody could map is not a domain with nothing on it.** The first records
+  `not_reached`; the second does not. A run report that let those look the same would be lying.
 
 ## Three routes already verified by hand
 
