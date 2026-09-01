@@ -283,9 +283,8 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         name="reclaim-keeps-stale-outcome",
         path="src/finder/store/repos.py",
-        old=" status = 'running', started_at = excluded.started_at,"
-        '\n            " finished_at = NULL, error = NULL",',
-        new=" status = 'running', started_at = excluded.started_at\",",
+        old='            " finished_at = NULL, error = NULL",',
+        new='            " finished_at = finished_at, error = error",',
         why="A retried item carrying the previous attempt's error and finish stamp "
         "reads as failed-then-succeeded, and the report cannot be trusted.",
     ),
