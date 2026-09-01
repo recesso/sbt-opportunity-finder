@@ -213,20 +213,26 @@ epics:
     priority: 0
     depends: [E1.S2]
     description: >
-      founder_mark and the founder-entered fields on person are his. A worker
-      attempting to write them is a P0 defect and must fail loudly rather than
-      succeed quietly. In the predecessor system this was enforced by convention
-      and was bypassed by the write path actually in use.
+      Founder-owned data is his. A worker attempting to write it is a P0 defect
+      and must fail loudly rather than succeed quietly. In the predecessor system
+      this was enforced by convention and was bypassed by the write path actually
+      in use, so here it is enforced structurally as well.
+      NOTE (2026-09-01, during E1.S1): the schema now isolates founder data in
+      its own tables — founder_mark and person_founder — rather than as guarded
+      columns on person. Table separation makes "no worker writes this" a
+      structural fact a later refactor cannot quietly bypass. This story now
+      guards the remaining path rather than inventing the separation.
     files: [src/finder/store/repos.py, tests/test_write_guard.py]
     tasks:
-      - "FOUNDER_OWNED registry of table.column names"
+      - "FOUNDER_OWNED registry of table names"
       - "Guard raising on any attempted write from a non-founder path"
       - "Audit log entry on every attempt"
     steps:
-      - "Define FOUNDER_OWNED = {'founder_mark': ALL, 'person': {'known_to_art','how_known','last_contact','connector_person_id'}}."
+      - "Define FOUNDER_OWNED_TABLES = {'founder_mark', 'person_founder'}."
       - "MarkRepo exposes only ingest_from_sheet() and read methods. There is no generic update path."
-      - "Add an assertion in the unit-of-work commit hook: if a write touches a founder-owned column and the caller is not the mark ingester, raise FounderFieldViolation and log at ERROR."
-      - "Test: a worker attempting the write raises; the exception names the table and column; an audit row is written."
+      - "Add an assertion in the unit-of-work commit hook: if a write targets a founder-owned table and the caller is not the mark ingester, raise FounderFieldViolation and log at ERROR."
+      - "Verify the schema keeps them separate: assert person has none of known_to_art, how_known, last_contact, connector_person_id (this is already covered by tests/test_migrations.py and must stay true)."
+      - "Test: a worker attempting the write raises; the exception names the table; an audit row is written."
     acceptance: >
       Any worker attempting a founder-owned write raises and is logged as a
       defect. The test proves it.
