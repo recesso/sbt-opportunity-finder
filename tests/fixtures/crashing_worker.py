@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from finder.context import RunContext, resume_run, start_run
 from finder.store.db import open_db
+from finder.store.repos import Store
 
 TOTAL_ITEMS = 100
 STAGE = "process"
@@ -34,6 +35,8 @@ def work(ctx: RunContext, crash_after: int | None) -> None:
             if not claimed:
                 continue
             processed.append(key)
+            ctx.count("pages_fetched")
+            ctx.cost.record("firecrawl", "scrape", usd=0.001)
             if crash_after is not None and len(processed) >= crash_after:
                 os._exit(137)  # abrupt: no finally, no flush, no cleanup
 
@@ -44,13 +47,13 @@ def work(ctx: RunContext, crash_after: int | None) -> None:
 
 def main() -> int:
     db_path, mode, run_id = sys.argv[1], sys.argv[2], sys.argv[3]
-    conn = open_db(db_path)
+    store = Store(open_db(db_path))
 
     if mode == "crash":
-        with start_run(conn, "test", run_id=run_id) as ctx:
+        with start_run(store, "test", run_id=run_id) as ctx:
             work(ctx, int(sys.argv[4]))
     else:
-        with resume_run(conn, run_id) as ctx:
+        with resume_run(store, run_id) as ctx:
             work(ctx, None)
     return 0
 

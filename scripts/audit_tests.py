@@ -243,23 +243,24 @@ MUTATIONS: list[Mutation] = [
     # --- run harness: checkpointing, isolation and honest reporting -------
     Mutation(
         name="failed-item-retried",
-        path="src/finder/context.py",
-        old='TERMINAL_STATES = frozenset({"done", "failed", "skipped"})',
-        new='TERMINAL_STATES = frozenset({"done"})',
+        path="src/finder/store/repos.py",
+        old='TERMINAL_ITEM_STATES: frozenset[str] = frozenset({"done", "failed", "skipped"})',
+        new='TERMINAL_ITEM_STATES: frozenset[str] = frozenset({"done"})',
         why="A page that 404s is retried forever inside the same run, burning budget.",
     ),
     Mutation(
         name="mid-flight-item-stranded",
-        path="src/finder/context.py",
-        old='TERMINAL_STATES = frozenset({"done", "failed", "skipped"})',
-        new='TERMINAL_STATES = frozenset({"done", "failed", "skipped", "running"})',
+        path="src/finder/store/repos.py",
+        old='TERMINAL_ITEM_STATES: frozenset[str] = frozenset({"done", "failed", "skipped"})',
+        new="TERMINAL_ITEM_STATES: frozenset[str] = frozenset("
+        '{"done", "failed", "skipped", "running"})',
         why="Treating 'running' as terminal strands whatever the crash interrupted: the "
         "item the process died on is never retried and the loss is invisible.",
     ),
     Mutation(
         name="checkpoint-not-consulted",
         path="src/finder/context.py",
-        old='        if row is not None and row["status"] in TERMINAL_STATES:',
+        old="        if status in TERMINAL_STATES:",
         new="        if False:",
         why="Ignoring the checkpoint makes a resumed run redo every completed item, "
         "which is the cost blow-up checkpointing exists to prevent.",
@@ -267,9 +268,26 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         name="unclaimed-completion-silent",
         path="src/finder/context.py",
-        old="        if cur.rowcount == 0:",
+        old="        if not updated:",
         new="        if False:",
         why="Bookkeeping that silently does nothing turns the run report into fiction.",
+    ),
+    Mutation(
+        name="finish-item-always-claims-success",
+        path="src/finder/store/repos.py",
+        old="        return cur.rowcount > 0",
+        new="        return True",
+        why="A repo that reports success for an item it never touched hides the bug "
+        "the caller's guard exists to catch.",
+    ),
+    Mutation(
+        name="reclaim-keeps-stale-outcome",
+        path="src/finder/store/repos.py",
+        old=" status = 'running', started_at = excluded.started_at,"
+        '\n            " finished_at = NULL, error = NULL",',
+        new=" status = 'running', started_at = excluded.started_at\",",
+        why="A retried item carrying the previous attempt's error and finish stamp "
+        "reads as failed-then-succeeded, and the report cannot be trusted.",
     ),
     Mutation(
         name="failure-recorded-as-success",
@@ -282,17 +300,25 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         name="one-bad-page-kills-the-run",
         path="src/finder/context.py",
-        old="        except Exception as exc:  # noqa: BLE001 - isolation is the whole point",
+        old="        except Exception as exc:",
         new="        except KeyboardInterrupt as exc:",
         why="Without per-item isolation one malformed page ends a harvest of four hundred.",
     ),
     Mutation(
         name="not-reached-dropped",
         path="src/finder/context.py",
-        old="        self.not_reached.append(NotReached(reason, detail, count))",
+        old="        self.store.runs.append_not_reached(self.run_id, entry.as_dict())",
         new="        pass",
         why="Dropping truncation lets silence read as completeness, which is how the "
         "predecessor reported success on runs that produced nothing.",
+    ),
+    Mutation(
+        name="counters-lost-on-crash",
+        path="src/finder/context.py",
+        old="        self.store.runs.bump(self.run_id, name, n)",
+        new="        pass",
+        why="Counters totalled only at close vanish with the process that dies, and "
+        "that is exactly the run whose numbers matter.",
     ),
     Mutation(
         name="unknown-counter-ignored",
@@ -302,13 +328,29 @@ MUTATIONS: list[Mutation] = [
         why="A typo'd counter that silently no-ops reports real work as zero.",
     ),
     Mutation(
+        name="counter-column-not-whitelisted",
+        path="src/finder/store/repos.py",
+        old="        if counter not in RUN_COUNTERS:",
+        new="        if False:",
+        why="The counter name is interpolated into SQL. Without the whitelist that is "
+        "an injection point, not a convenience.",
+    ),
+    Mutation(
         name="cost-not-persisted",
-        path="src/finder/context.py",
-        old='            "INSERT INTO cost_event (cost_id, run_id, provider,'
-        ' operation, units, usd,"\n            " recorded_at)'
-        ' VALUES (?,?,?,?,?,?,?)",',
+        path="src/finder/store/repos.py",
+        old='            "INSERT INTO cost_event (cost_id, run_id, provider, operation,'
+        ' units, usd,"\n            " recorded_at) VALUES (?,?,?,?,?,?,?)",',
         new='            "SELECT ?,?,?,?,?,?,?",',
         why="Unpersisted spend makes cost-per-good-route uncomputable and hides a price spike.",
+    ),
+    Mutation(
+        name="cost-not-scoped-to-the-run",
+        path="src/finder/store/repos.py",
+        old='            "SELECT COALESCE(SUM(usd), 0.0) s FROM cost_event WHERE run_id = ?",'
+        " (run_id,)",
+        new='            "SELECT COALESCE(SUM(usd), 0.0) s FROM cost_event WHERE ? IS NOT NULL",'
+        " (run_id,)",
+        why="Billing every run for every other run's spend makes the number meaningless.",
     ),
     Mutation(
         name="aborted-run-reported-ok",
@@ -321,9 +363,17 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         name="error-text-untruncated",
         path="src/finder/context.py",
-        old="error=error[:500])",
-        new="error=error)",
+        old="MAX_LOGGED_ERROR = 500",
+        new="MAX_LOGGED_ERROR = 5_000_000",
         why="A two-megabyte HTML body in a log line is how log files become unreadable.",
+    ),
+    Mutation(
+        name="raw-sql-guard-blind",
+        path="tests/test_repos.py",
+        old='RAW_SQL = re.compile(r"import sqlite3|\\bconn\\.execute(many)?\\(")',
+        new='RAW_SQL = re.compile(r"this-will-never-match")',
+        why="The architectural boundary is only real while its scanner can see a "
+        "violation. A blind guard is worse than none: it reports compliance.",
     ),
 ]
 

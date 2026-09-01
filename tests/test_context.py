@@ -8,8 +8,6 @@ actual subprocess with ``os._exit`` rather than simulating it.
 
 from __future__ import annotations
 
-import json
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -19,7 +17,7 @@ from structlog.testing import capture_logs
 
 from finder.context import (
     COUNTERS,
-    CostLedger,
+    RunContext,
     RunError,
     last_run,
     new_run_id,
@@ -28,17 +26,14 @@ from finder.context import (
     unfinished_runs,
 )
 from finder.store.db import open_db
+from finder.store.repos import RepoError, Store
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 @pytest.fixture
-def conn() -> sqlite3.Connection:
-    return open_db(":memory:")
-
-
-def run_row(conn: sqlite3.Connection, run_id: str) -> sqlite3.Row:
-    return conn.execute("SELECT * FROM run WHERE run_id=?", (run_id,)).fetchone()
+def store() -> Store:
+    return Store(open_db(":memory:"))
 
 
 # --- identifiers and lifecycle ---------------------------------------------
@@ -50,65 +45,70 @@ def test_run_id_is_sortable_and_legible() -> None:
     assert len(rid.split("-")) == 3
 
 
-def test_run_is_recorded_and_closed(conn: sqlite3.Connection) -> None:
-    with start_run(conn, "weekly", config_hash="cfg-1") as ctx:
+def test_run_is_recorded_and_closed(store: Store) -> None:
+    with start_run(store, "weekly", config_hash="cfg-1") as ctx:
         rid = ctx.run_id
-        assert run_row(conn, rid)["status"] == "running"
-    row = run_row(conn, rid)
-    assert row["status"] == "ok"
-    assert row["finished_at"] is not None
-    assert row["config_hash"] == "cfg-1"
+        assert store.runs.get(rid).status == "running"
+    run = store.runs.get(rid)
+    assert run.status == "ok"
+    assert run.finished_at is not None
+    assert run.config_hash == "cfg-1"
+    assert run.not_reached == []
 
 
-def test_a_crashing_run_is_marked_failed_not_left_running(conn: sqlite3.Connection) -> None:
+def test_a_crashing_run_is_marked_failed_not_left_running(store: Store) -> None:
     """An abandoned run must be distinguishable from one still in flight."""
-    with pytest.raises(ValueError), start_run(conn, "weekly") as ctx:
+    with pytest.raises(ValueError), start_run(store, "weekly") as ctx:
         rid = ctx.run_id
         raise ValueError("provider exploded")
 
-    row = run_row(conn, rid)
-    assert row["status"] == "failed"
-    assert "provider exploded" in row["error"]
-    assert json.loads(row["not_reached"]), "an aborted run must say it was aborted"
+    run = store.runs.get(rid)
+    assert run.status == "failed"
+    assert "provider exploded" in run.error
+    assert run.not_reached[0]["reason"] == "run_aborted"
 
 
-def test_unfinished_runs_finds_a_stuck_run(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        "INSERT INTO run (run_id, workflow, started_at, status) VALUES (?,?,?,'running')",
-        ("stuck-1", "weekly", "2026-09-01T00:00:00+00:00"),
-    )
-    assert [r["run_id"] for r in unfinished_runs(conn)] == ["stuck-1"]
+def test_unfinished_runs_finds_a_stuck_run(store: Store) -> None:
+    store.runs.start("stuck-1", "weekly")
+    assert [r.run_id for r in unfinished_runs(store)] == ["stuck-1"]
 
-
-def test_last_run_filters_by_workflow(conn: sqlite3.Connection) -> None:
-    with start_run(conn, "daily"):
+    with start_run(store, "weekly"):
         pass
-    with start_run(conn, "weekly") as ctx:
+    assert [r.run_id for r in unfinished_runs(store)] == ["stuck-1"], (
+        "a run that closed cleanly is not unfinished"
+    )
+
+
+def test_last_run_filters_by_workflow(store: Store) -> None:
+    with start_run(store, "daily"):
+        pass
+    with start_run(store, "weekly") as ctx:
         weekly_id = ctx.run_id
-    assert last_run(conn, "weekly")["run_id"] == weekly_id
-    assert last_run(conn)["run_id"] == weekly_id
+    assert last_run(store, "weekly").run_id == weekly_id
+    assert last_run(store).run_id == weekly_id
+    assert last_run(store, "monthly") is None
 
 
 # --- checkpointing ---------------------------------------------------------
 
 
-def test_claim_is_exclusive_once_an_item_is_done(conn: sqlite3.Connection) -> None:
-    with start_run(conn, "weekly") as ctx:
+def test_claim_is_exclusive_once_an_item_is_done(store: Store) -> None:
+    with start_run(store, "weekly") as ctx:
         assert ctx.claim("map", "org-1") is True
         ctx.complete("map", "org-1")
         assert ctx.claim("map", "org-1") is False
 
 
-def test_a_stale_running_item_is_reclaimable(conn: sqlite3.Connection) -> None:
+def test_a_stale_running_item_is_reclaimable(store: Store) -> None:
     """The resume case: a crashed process leaves items mid-flight and they must
     be retried, not stranded."""
-    with start_run(conn, "weekly") as ctx:
+    with start_run(store, "weekly") as ctx:
         assert ctx.claim("map", "org-1") is True
         assert ctx.claim("map", "org-1") is True, "a running item is not terminal"
 
 
-def test_failed_and_skipped_items_are_not_retried_within_a_run(conn: sqlite3.Connection) -> None:
-    with start_run(conn, "weekly") as ctx:
+def test_failed_and_skipped_items_are_not_retried_within_a_run(store: Store) -> None:
+    with start_run(store, "weekly") as ctx:
         ctx.claim("map", "org-1")
         ctx.fail("map", "org-1", "404")
         assert ctx.claim("map", "org-1") is False
@@ -118,36 +118,53 @@ def test_failed_and_skipped_items_are_not_retried_within_a_run(conn: sqlite3.Con
         assert ctx.claim("map", "org-2") is False
 
 
-def test_completing_an_unclaimed_item_is_an_error(conn: sqlite3.Connection) -> None:
+def test_checkpoints_are_scoped_to_their_run(store: Store) -> None:
+    """Last week's completed work must not suppress this week's."""
+    with start_run(store, "weekly", run_id="r-1") as first:
+        first.claim("map", "org-1")
+        first.complete("map", "org-1")
+
+    with start_run(store, "weekly", run_id="r-2") as second:
+        assert second.claim("map", "org-1") is True
+
+
+def test_completing_an_unclaimed_item_is_an_error(store: Store) -> None:
     """Bookkeeping that silently does nothing is how reporting becomes fiction."""
-    with start_run(conn, "weekly") as ctx, pytest.raises(RunError, match="never claimed"):
+    with start_run(store, "weekly") as ctx, pytest.raises(RunError, match="never claimed"):
         ctx.complete("map", "never-claimed")
 
 
-def test_item_context_records_success(conn: sqlite3.Connection) -> None:
-    with start_run(conn, "weekly") as ctx:
+def test_item_context_records_success(store: Store) -> None:
+    with start_run(store, "weekly") as ctx:
         with ctx.item("map", "org-1") as claimed:
             assert claimed
         assert ctx.stage_summary("map") == {"done": 1}
 
 
-def test_item_context_isolates_a_failure(conn: sqlite3.Connection) -> None:
+def test_item_context_isolates_a_failure(store: Store) -> None:
     """One bad page must not take down a harvest of four hundred."""
-    with start_run(conn, "weekly") as ctx:
+    with start_run(store, "weekly") as ctx:
         for i in range(5):
             with ctx.item("map", f"org-{i}") as claimed:
                 assert claimed
                 if i == 2:
                     raise RuntimeError("that page is malformed")
 
-        summary = ctx.stage_summary("map")
-        assert summary == {"done": 4, "failed": 1}
+        assert ctx.stage_summary("map") == {"done": 4, "failed": 1}
+        rid = ctx.run_id
 
-    assert run_row(conn, ctx.run_id)["status"] == "ok", "item failures do not fail the run"
+    assert store.runs.get(rid).status == "ok", "item failures do not fail the run"
 
 
-def test_item_context_yields_false_for_finished_work(conn: sqlite3.Connection) -> None:
-    with start_run(conn, "weekly") as ctx:
+def test_a_failed_item_records_why(store: Store) -> None:
+    with start_run(store, "weekly") as ctx:
+        with ctx.item("map", "org-1"):
+            raise ValueError("no such element")
+        assert store.stage_runs.status(ctx.run_id, "map", "org-1") == "failed"
+
+
+def test_item_context_yields_false_for_finished_work(store: Store) -> None:
+    with start_run(store, "weekly") as ctx:
         with ctx.item("map", "org-1"):
             pass
         seen = []
@@ -156,8 +173,8 @@ def test_item_context_yields_false_for_finished_work(conn: sqlite3.Connection) -
         assert seen == [False]
 
 
-def test_pending_returns_only_unfinished_items(conn: sqlite3.Connection) -> None:
-    with start_run(conn, "weekly") as ctx:
+def test_pending_returns_only_unfinished_items_in_order(store: Store) -> None:
+    with start_run(store, "weekly") as ctx:
         keys = [f"org-{i}" for i in range(5)]
         with ctx.item("map", "org-1"):
             pass
@@ -186,7 +203,8 @@ def test_a_real_crash_resumes_without_reprocessing(tmp_path: Path) -> None:
 
     The precise invariant is narrower than "items 1-47 are not reprocessed":
     the 47th item was *mid-flight* when the process died, so it must be redone.
-    Only completed work is protected. Both halves are asserted below.
+    Only completed work is protected. Both halves are asserted here, along with
+    the counters and the spend, which must also survive the kill.
     """
     db_path = tmp_path / "crash.db"
     worker = FIXTURES / "crashing_worker.py"
@@ -199,13 +217,17 @@ def test_a_real_crash_resumes_without_reprocessing(tmp_path: Path) -> None:
     )
     assert crashed.returncode == 137, f"child did not crash as expected: {crashed.stderr[-800:]}"
 
-    conn = open_db(db_path)
-    done_before = conn.execute(
-        "SELECT COUNT(*) c FROM stage_run WHERE run_id=? AND status='done'", (run_id,)
-    ).fetchone()["c"]
+    store = Store(open_db(db_path))
+    done_before = store.stage_runs.summary(run_id, "process")["done"]
     assert done_before == 46, "46 completed before the crash; the 47th was mid-flight"
-    assert run_row(conn, run_id)["status"] == "running", "a killed run stays marked running"
-    conn.close()
+
+    crashed_run = store.runs.get(run_id)
+    assert crashed_run.status == "running", "a killed run stays marked running"
+    assert crashed_run.counters["pages_fetched"] == 47, (
+        "counters must be written through, not totalled at a close that never came"
+    )
+    assert store.costs.total(run_id) == pytest.approx(0.047), "spend before the crash is real"
+    store.conn.close()
 
     resumed = subprocess.run(
         [sys.executable, str(worker), str(db_path), "resume", run_id],
@@ -223,68 +245,84 @@ def test_a_real_crash_resumes_without_reprocessing(tmp_path: Path) -> None:
     )
     assert result["last"] == "item-099"
 
-    conn = open_db(db_path)
-    assert (
-        conn.execute(
-            "SELECT COUNT(*) c FROM stage_run WHERE run_id=? AND status='done'", (run_id,)
-        ).fetchone()["c"]
-        == 100
+    store = Store(open_db(db_path))
+    final = store.runs.get(run_id)
+    assert store.stage_runs.summary(run_id, "process") == {"done": 100}
+    assert final.status == "ok"
+    assert final.counters["pages_fetched"] == 101, (
+        "47 before the crash plus 54 after: the mid-flight item is counted twice, "
+        "which is the honest number for work actually performed"
     )
-    assert run_row(conn, run_id)["status"] == "ok"
+    assert final.cost_usd == pytest.approx(0.101)
 
 
 # --- not_reached -----------------------------------------------------------
 
 
-def test_not_reached_is_recorded_and_persisted(conn: sqlite3.Connection) -> None:
+def test_not_reached_is_recorded_and_persisted(store: Store) -> None:
     """Silence must not be readable as completeness."""
-    with start_run(conn, "weekly") as ctx:
+    with start_run(store, "weekly") as ctx:
         rid = ctx.run_id
         ctx.record_not_reached("budget", "stopped after 300 of 800 organizations", count=500)
 
-    stored = json.loads(run_row(conn, rid)["not_reached"])
-    assert stored == [
+    assert store.runs.get(rid).not_reached == [
         {"reason": "budget", "detail": "stopped after 300 of 800 organizations", "count": 500}
     ]
 
 
-def test_a_clean_run_reports_nothing_unreached(conn: sqlite3.Connection) -> None:
-    with start_run(conn, "weekly") as ctx:
+def test_not_reached_is_on_the_row_before_the_run_closes(store: Store) -> None:
+    """Recorded, then killed: the truncation record is already durable."""
+    with start_run(store, "weekly", run_id="r-1") as ctx:
+        ctx.record_not_reached("provider_outage", "Exa 503")
+        assert store.runs.get("r-1").not_reached[0]["reason"] == "provider_outage"
+        assert store.runs.get("r-1").status == "running", "not yet closed"
+
+
+def test_a_clean_run_reports_nothing_unreached(store: Store) -> None:
+    with start_run(store, "weekly") as ctx:
         rid = ctx.run_id
-    assert json.loads(run_row(conn, rid)["not_reached"]) == []
+    assert store.runs.get(rid).not_reached == []
 
 
 # --- counters --------------------------------------------------------------
 
 
-def test_counters_accumulate_and_persist(conn: sqlite3.Connection) -> None:
-    with start_run(conn, "weekly") as ctx:
+def test_counters_accumulate_and_persist(store: Store) -> None:
+    with start_run(store, "weekly") as ctx:
         rid = ctx.run_id
         ctx.count("pages_fetched", 12)
         ctx.count("pages_fetched", 3)
         ctx.count("routes_written")
-    row = run_row(conn, rid)
-    assert row["pages_fetched"] == 15
-    assert row["routes_written"] == 1
-    assert row["quarantined"] == 0
+    counters = store.runs.get(rid).counters
+    assert counters["pages_fetched"] == 15
+    assert counters["routes_written"] == 1
+    assert counters["quarantined"] == 0
 
 
-def test_an_unknown_counter_is_an_error(conn: sqlite3.Connection) -> None:
+def test_an_unknown_counter_is_an_error(store: Store) -> None:
     """A typo that silently does nothing turns the run report into fiction."""
-    with start_run(conn, "weekly") as ctx, pytest.raises(RunError, match="unknown counter"):
+    with start_run(store, "weekly") as ctx, pytest.raises(RunError, match="unknown counter"):
         ctx.count("pagez_fetched")
 
 
-def test_counter_names_match_the_schema(conn: sqlite3.Connection) -> None:
-    columns = {r["name"] for r in conn.execute("PRAGMA table_info(run)")}
+def test_the_repo_refuses_an_unknown_counter_too(store: Store) -> None:
+    """The guard belongs at the boundary as well: the SQL builds a column name."""
+    store.runs.start("r-1", "weekly")
+    with pytest.raises(RepoError, match="unknown run counter"):
+        store.runs.bump("r-1", "pages_fetched = 0, workflow = 'x'", 1)
+    assert store.runs.get("r-1").workflow == "weekly"
+
+
+def test_counter_names_match_the_schema(store: Store) -> None:
+    columns = {r["name"] for r in store.conn.execute("PRAGMA table_info(run)")}
     assert columns >= COUNTERS, f"counters with no column: {COUNTERS - columns}"
 
 
 # --- cost accounting -------------------------------------------------------
 
 
-def test_cost_is_recorded_per_call_and_totalled(conn: sqlite3.Connection) -> None:
-    with start_run(conn, "weekly") as ctx:
+def test_cost_is_recorded_per_call_and_totalled(store: Store) -> None:
+    with start_run(store, "weekly") as ctx:
         rid = ctx.run_id
         ctx.cost.record("firecrawl", "map", usd=0.002)
         ctx.cost.record("firecrawl", "scrape", units=40, usd=0.04)
@@ -296,33 +334,41 @@ def test_cost_is_recorded_per_call_and_totalled(conn: sqlite3.Connection) -> Non
             "llm": pytest.approx(0.15),
         }
 
-    assert run_row(conn, rid)["cost_usd"] == pytest.approx(0.192)
-    assert conn.execute("SELECT COUNT(*) c FROM cost_event").fetchone()["c"] == 3
+    assert store.runs.get(rid).cost_usd == pytest.approx(0.192)
+    assert store.costs.count() == 3
 
 
-def test_cost_survives_a_run_that_dies(conn: sqlite3.Connection) -> None:
+def test_cost_survives_a_run_that_dies(store: Store) -> None:
     """Spend is real whether or not the run finished; recording per call means a
     crashed run still leaves an accurate bill."""
-    with pytest.raises(RuntimeError), start_run(conn, "weekly") as ctx:
+    with pytest.raises(RuntimeError), start_run(store, "weekly", run_id="r-1") as ctx:
         ctx.cost.record("firecrawl", "scrape", usd=0.5)
         raise RuntimeError("died mid-run")
 
-    assert conn.execute("SELECT SUM(usd) s FROM cost_event").fetchone()["s"] == pytest.approx(0.5)
-    assert run_row(conn, ctx.run_id)["cost_usd"] == pytest.approx(0.5)
+    assert store.costs.total("r-1") == pytest.approx(0.5)
+    assert store.runs.get("r-1").cost_usd == pytest.approx(0.5)
 
 
-def test_empty_ledger_totals_zero(conn: sqlite3.Connection) -> None:
-    ledger = CostLedger(conn, "run-x")
-    assert ledger.total_usd == 0.0
-    assert ledger.by_provider() == {}
+def test_cost_is_scoped_to_the_run(store: Store) -> None:
+    with start_run(store, "weekly", run_id="r-1") as first:
+        first.cost.record("exa", "search", usd=1.0)
+    with start_run(store, "weekly", run_id="r-2") as second:
+        second.cost.record("exa", "search", usd=0.25)
+        assert second.cost.total_usd == pytest.approx(0.25)
+
+
+def test_a_run_with_no_spend_totals_zero(store: Store) -> None:
+    with start_run(store, "weekly") as ctx:
+        assert ctx.cost.total_usd == 0.0
+        assert ctx.cost.by_provider() == {}
 
 
 # --- the report ------------------------------------------------------------
 
 
-def test_report_leads_with_what_failed(conn: sqlite3.Connection) -> None:
+def test_report_leads_with_what_failed(store: Store) -> None:
     """Standing rule: say what failed, first."""
-    with start_run(conn, "weekly", config_hash="cfg-9") as ctx:
+    with start_run(store, "weekly", config_hash="cfg-9") as ctx:
         ctx.count("routes_written", 7)
         ctx.cost.record("exa", "search", usd=0.01)
         ctx.record_not_reached("provider_outage", "Exa returned 503 for 40 queries", count=40)
@@ -333,49 +379,71 @@ def test_report_leads_with_what_failed(conn: sqlite3.Connection) -> None:
     assert report["not_reached"][0]["reason"] == "provider_outage"
     assert report["counters"] == {"routes_written": 7}
     assert report["cost_usd"] == pytest.approx(0.01)
+    assert report["cost_by_provider"] == {"exa": pytest.approx(0.01)}
     assert report["config_hash"] == "cfg-9"
 
 
 # --- resume ----------------------------------------------------------------
 
 
-def test_resume_unknown_run_raises(conn: sqlite3.Connection) -> None:
-    with pytest.raises(RunError, match="no such run"), resume_run(conn, "nope"):
+def test_resume_unknown_run_raises(store: Store) -> None:
+    with pytest.raises(RunError, match="no such run"), resume_run(store, "nope"):
         pass
 
 
-def test_a_resumed_run_that_crashes_is_also_marked_failed(conn: sqlite3.Connection) -> None:
-    """Resume is not a second-class path; it closes the run book the same way."""
-    with start_run(conn, "weekly") as ctx:
-        rid = ctx.run_id
-
-    with pytest.raises(RuntimeError), resume_run(conn, rid):
-        raise RuntimeError("died again")
-
-    row = run_row(conn, rid)
-    assert row["status"] == "failed"
-    assert "died again" in row["error"]
-    assert json.loads(row["not_reached"])[0]["reason"] == "run_aborted"
-
-
-def test_resume_reopens_and_recloses(conn: sqlite3.Connection) -> None:
-    with start_run(conn, "weekly") as ctx:
+def test_resume_reopens_and_recloses(store: Store) -> None:
+    with start_run(store, "weekly") as ctx:
         rid = ctx.run_id
         ctx.claim("map", "org-1")
         ctx.complete("map", "org-1")
 
-    with resume_run(conn, rid) as ctx2:
+    with resume_run(store, rid) as ctx2:
         assert ctx2.workflow == "weekly"
         assert ctx2.claim("map", "org-1") is False
         assert ctx2.claim("map", "org-2") is True
         ctx2.complete("map", "org-2")
 
-    assert run_row(conn, rid)["status"] == "ok"
+    assert store.runs.get(rid).status == "ok"
 
 
-def test_every_log_line_carries_the_run_id(conn: sqlite3.Connection) -> None:
+def test_resume_carries_forward_counters_and_truncation(store: Store) -> None:
+    """The closing report covers the run, not just its last attempt."""
+    with start_run(store, "weekly", config_hash="cfg-3", run_id="r-1") as ctx:
+        ctx.count("pages_fetched", 40)
+        ctx.record_not_reached("budget", "300 of 800")
+
+    with resume_run(store, "r-1") as ctx2:
+        assert ctx2.config_hash == "cfg-3"
+        assert ctx2.counters == {"pages_fetched": 40}
+        assert [n.reason for n in ctx2.not_reached] == ["budget"]
+        ctx2.count("pages_fetched", 2)
+        report = ctx2.report()
+
+    assert report["counters"]["pages_fetched"] == 42
+    assert store.runs.get("r-1").counters["pages_fetched"] == 42
+    assert len(store.runs.get("r-1").not_reached) == 1, "no duplicate truncation record"
+
+
+def test_a_resumed_run_that_crashes_is_also_marked_failed(store: Store) -> None:
+    """Resume is not a second-class path; it closes the run book the same way."""
+    with start_run(store, "weekly", run_id="r-1"):
+        pass
+
+    with pytest.raises(RuntimeError), resume_run(store, "r-1"):
+        raise RuntimeError("died again")
+
+    run = store.runs.get("r-1")
+    assert run.status == "failed"
+    assert "died again" in run.error
+    assert run.not_reached[0]["reason"] == "run_aborted"
+
+
+# --- logging ---------------------------------------------------------------
+
+
+def test_every_log_line_carries_the_run_id(store: Store) -> None:
     """A run's log lines must be greppable by run_id or triage is guesswork."""
-    with capture_logs() as logs, start_run(conn, "weekly") as ctx:
+    with capture_logs() as logs, start_run(store, "weekly") as ctx:
         rid = ctx.run_id
         ctx.claim("map", "org-1")
         ctx.fail("map", "org-1", "boom")
@@ -388,16 +456,25 @@ def test_every_log_line_carries_the_run_id(conn: sqlite3.Connection) -> None:
         assert entry["workflow"] == "weekly"
 
 
-def test_failure_log_does_not_leak_a_whole_page_body(conn: sqlite3.Connection) -> None:
+def test_failure_log_does_not_leak_a_whole_page_body(store: Store) -> None:
     """Errors get truncated; a 2 MB HTML body in a log line is how log files die."""
-    with capture_logs() as logs, start_run(conn, "weekly") as ctx:
+    with capture_logs() as logs, start_run(store, "weekly") as ctx:
         ctx.claim("fetch", "page-1")
         ctx.fail("fetch", "page-1", "x" * 50_000)
+        rid = ctx.run_id
 
     failure = next(e for e in logs if e["event"] == "item_failed")
     assert len(failure["error"]) == 500
 
-    stored = conn.execute(
-        "SELECT error FROM stage_run WHERE stage='fetch' AND item_key='page-1'"
+    stored = store.conn.execute(
+        "SELECT error FROM stage_run WHERE run_id=? AND stage='fetch' AND item_key='page-1'",
+        (rid,),
     ).fetchone()["error"]
     assert len(stored) == 2000
+
+
+def test_the_harness_holds_a_store_not_a_connection(store: Store) -> None:
+    """The architecture rule: no worker holds a cursor. Repositories own the SQL."""
+    ctx = RunContext(run_id="r-1", workflow="weekly", store=store)
+    assert ctx.store is store
+    assert not hasattr(ctx, "conn")

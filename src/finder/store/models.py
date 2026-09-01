@@ -14,6 +14,7 @@ work with real Python lists.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 Family = str  # 'ROOM' | 'CHANNEL' | 'EMPLOYER' | 'PERSON'
 
@@ -179,3 +180,23 @@ class Rejection:
     pattern_tag: str | None = None
     reason: str | None = None
     created_from_mark_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Run:
+    """One execution of one workflow.
+
+    ``not_reached`` is a list, never None: a run that reached everything says so
+    with an empty list, and silence is never the same as completeness.
+    """
+
+    run_id: str
+    workflow: str
+    started_at: str
+    status: str
+    finished_at: str | None = None
+    config_hash: str | None = None
+    counters: dict[str, int] = field(default_factory=dict)
+    cost_usd: float = 0.0
+    not_reached: list[dict[str, Any]] = field(default_factory=list)
+    error: str | None = None

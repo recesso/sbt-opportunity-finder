@@ -5,10 +5,9 @@ the build. Everything else in the system works with the dataclasses in
 ``models.py``.
 
 Only the entities on the M1 path plus the founder-owned ones are implemented.
-Repositories for occurrence, network, signal and cost_event are deliberately
-deferred until a worker actually writes them — an unused abstraction is a
-liability, not a head start. The tables exist; the accessors arrive with the
-code that needs them.
+Repositories for occurrence, network and signal are deliberately deferred until
+a worker actually writes them — an unused abstraction is a liability, not a head
+start. The tables exist; the accessors arrive with the code that needs them.
 
 Founder-owned tables (``founder_mark``, ``person_founder``) are reachable only
 through :class:`MarkRepo`, which has no generic update path. E1.S3 adds the
@@ -32,6 +31,7 @@ from finder.store.models import (
     Person,
     Rejection,
     Route,
+    Run,
     Score,
     Trigger,
 )
@@ -800,6 +800,221 @@ class RejectionRepo(_Repo):
 
 # --------------------------------------------------------------------------
 
+# Counter columns on the run row. Anything outside this tuple is a typo, and a
+# typo that silently does nothing is how a run report becomes fiction.
+RUN_COUNTERS: tuple[str, ...] = (
+    "orgs_mapped",
+    "pages_fetched",
+    "candidates",
+    "survived_gate",
+    "survived_rerank",
+    "routes_written",
+    "quarantined",
+)
+
+TERMINAL_ITEM_STATES: frozenset[str] = frozenset({"done", "failed", "skipped"})
+
+
+class RunRepo(_Repo):
+    """The run ledger: one row per execution, opened and closed honestly.
+
+    A run left ``running`` means the process died. That is a real state worth
+    keeping — :meth:`unfinished` is how a resume finds its work.
+    """
+
+    def start(self, run_id: str, workflow: str, *, config_hash: str | None = None) -> Run:
+        self._exec(
+            "INSERT INTO run (run_id, workflow, started_at, status, config_hash)"
+            " VALUES (?,?,?,'running',?)",
+            (run_id, workflow, utcnow(), config_hash),
+        )
+        got = self.get(run_id)
+        if got is None:  # pragma: no cover - insert succeeded or raised
+            raise RepoError(f"run {run_id} did not persist")
+        return got
+
+    def get(self, run_id: str) -> Run | None:
+        row = self._one("SELECT * FROM run WHERE run_id = ?", (run_id,))
+        return self._row(row) if row else None
+
+    def reopen(self, run_id: str) -> None:
+        """Mark a run running again so a resume is visible while it is happening."""
+        self._exec(
+            "UPDATE run SET status = 'running', finished_at = NULL WHERE run_id = ?",
+            (run_id,),
+        )
+
+    def bump(self, run_id: str, counter: str, n: int = 1) -> None:
+        """Increment a counter in the row, not in memory.
+
+        Counters totalled at close vanish with the process that dies — and that
+        is precisely the run whose report matters. Written through, a crashed
+        run still reports the work it actually did.
+        """
+        if counter not in RUN_COUNTERS:
+            raise RepoError(f"unknown run counter {counter!r}; expected one of {RUN_COUNTERS}")
+        # Interpolated, not bound: SQLite cannot parameterise a column name. Safe
+        # only because the name was just checked against the fixed tuple above.
+        self._exec(f"UPDATE run SET {counter} = {counter} + ? WHERE run_id = ?", (n, run_id))
+
+    def append_not_reached(self, run_id: str, entry: dict[str, Any]) -> None:
+        """Append one truncation record, durably.
+
+        Read-modify-write is fine here: not_reached holds a handful of entries
+        per run, and a run has one writer.
+        """
+        row = self._one("SELECT not_reached FROM run WHERE run_id = ?", (run_id,))
+        if row is None:
+            raise RepoError(f"no such run: {run_id}")
+        parsed = json.loads(row["not_reached"] or "[]")
+        current = list(parsed) if isinstance(parsed, list) else []
+        current.append(entry)
+        self._exec("UPDATE run SET not_reached = ? WHERE run_id = ?", (_dump(current), run_id))
+
+    def finish(self, run_id: str, *, status: str, error: str | None, cost_usd: float) -> None:
+        """Close the book. Counters and not_reached are already on the row."""
+        self._exec(
+            "UPDATE run SET finished_at = ?, status = ?, error = ?, cost_usd = ? WHERE run_id = ?",
+            (utcnow(), status, error, cost_usd, run_id),
+        )
+
+    def last(self, workflow: str | None = None) -> Run | None:
+        if workflow is None:
+            row = self._one("SELECT * FROM run ORDER BY started_at DESC LIMIT 1")
+        else:
+            row = self._one(
+                "SELECT * FROM run WHERE workflow = ? ORDER BY started_at DESC LIMIT 1",
+                (workflow,),
+            )
+        return self._row(row) if row else None
+
+    def unfinished(self) -> list[Run]:
+        """Runs a process died inside. The starting point for every resume."""
+        return [
+            self._row(r)
+            for r in self._all("SELECT * FROM run WHERE status = 'running' ORDER BY started_at")
+        ]
+
+    def count(self) -> int:
+        return self._one("SELECT COUNT(*) c FROM run")["c"]  # type: ignore[index]
+
+    @staticmethod
+    def _row(row: sqlite3.Row) -> Run:
+        parsed = json.loads(row["not_reached"] or "[]")
+        return Run(
+            run_id=row["run_id"],
+            workflow=row["workflow"],
+            started_at=row["started_at"],
+            status=row["status"],
+            finished_at=row["finished_at"],
+            config_hash=row["config_hash"],
+            counters={c: row[c] for c in RUN_COUNTERS},
+            cost_usd=row["cost_usd"],
+            not_reached=list(parsed) if isinstance(parsed, list) else [],
+            error=row["error"],
+        )
+
+
+class StageRunRepo(_Repo):
+    """Per-item checkpoints (ADR-010).
+
+    The one subtlety worth stating: a row left ``running`` by a crashed process
+    is NOT terminal. Refusing to reclaim it would strand exactly the item the
+    process died on, and the loss would be invisible.
+    """
+
+    def status(self, run_id: str, stage: str, item_key: str) -> str | None:
+        row = self._one(
+            "SELECT status FROM stage_run WHERE run_id = ? AND stage = ? AND item_key = ?",
+            (run_id, stage, item_key),
+        )
+        return row["status"] if row else None
+
+    def start_item(self, run_id: str, stage: str, item_key: str) -> None:
+        self._exec(
+            "INSERT INTO stage_run (run_id, stage, item_key, status, started_at)"
+            " VALUES (?,?,?,'running',?)"
+            " ON CONFLICT(run_id, stage, item_key) DO UPDATE SET"
+            " status = 'running', started_at = excluded.started_at,"
+            " finished_at = NULL, error = NULL",
+            (run_id, stage, item_key, utcnow()),
+        )
+
+    def finish_item(
+        self, run_id: str, stage: str, item_key: str, status: str, error: str | None
+    ) -> bool:
+        """False when no such claimed item exists — the caller must not ignore it."""
+        cur = self._exec(
+            "UPDATE stage_run SET status = ?, finished_at = ?, error = ?"
+            " WHERE run_id = ? AND stage = ? AND item_key = ?",
+            (status, utcnow(), error, run_id, stage, item_key),
+        )
+        return cur.rowcount > 0
+
+    def finished_keys(self, run_id: str, stage: str) -> set[str]:
+        placeholders = ",".join("?" for _ in TERMINAL_ITEM_STATES)
+        rows = self._all(
+            "SELECT item_key FROM stage_run WHERE run_id = ? AND stage = ?"
+            f" AND status IN ({placeholders})",
+            (run_id, stage, *sorted(TERMINAL_ITEM_STATES)),
+        )
+        return {r["item_key"] for r in rows}
+
+    def summary(self, run_id: str, stage: str) -> dict[str, int]:
+        rows = self._all(
+            "SELECT status, COUNT(*) c FROM stage_run WHERE run_id = ? AND stage = ?"
+            " GROUP BY status",
+            (run_id, stage),
+        )
+        return {r["status"]: r["c"] for r in rows}
+
+    def count(self) -> int:
+        return self._one("SELECT COUNT(*) c FROM stage_run")["c"]  # type: ignore[index]
+
+
+class CostRepo(_Repo):
+    """Per-provider spend, written as it is incurred.
+
+    Totals are read back from these rows rather than accumulated in memory, so a
+    resumed run reports what the whole run cost, not what this process cost.
+    """
+
+    def record(
+        self,
+        cost_id: str,
+        run_id: str,
+        provider: str,
+        operation: str,
+        *,
+        units: float = 1.0,
+        usd: float = 0.0,
+    ) -> None:
+        self._exec(
+            "INSERT INTO cost_event (cost_id, run_id, provider, operation, units, usd,"
+            " recorded_at) VALUES (?,?,?,?,?,?,?)",
+            (cost_id, run_id, provider, operation, units, usd, utcnow()),
+        )
+
+    def total(self, run_id: str) -> float:
+        row = self._one(
+            "SELECT COALESCE(SUM(usd), 0.0) s FROM cost_event WHERE run_id = ?", (run_id,)
+        )
+        return round(float(row["s"]), 6)  # type: ignore[index]
+
+    def by_provider(self, run_id: str) -> dict[str, float]:
+        rows = self._all(
+            "SELECT provider, SUM(usd) s FROM cost_event WHERE run_id = ?"
+            " GROUP BY provider ORDER BY provider",
+            (run_id,),
+        )
+        return {r["provider"]: round(float(r["s"]), 6) for r in rows}
+
+    def count(self) -> int:
+        return self._one("SELECT COUNT(*) c FROM cost_event")["c"]  # type: ignore[index]
+
+
+# --------------------------------------------------------------------------
+
 
 class Store:
     """All repositories over one connection, plus the unit of work.
@@ -819,6 +1034,9 @@ class Store:
         self.triggers = TriggerRepo(conn)
         self.marks = MarkRepo(conn)
         self.rejections = RejectionRepo(conn)
+        self.runs = RunRepo(conn)
+        self.stage_runs = StageRunRepo(conn)
+        self.costs = CostRepo(conn)
 
     @contextmanager
     def unit_of_work(self) -> Iterator[Store]:

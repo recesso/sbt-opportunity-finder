@@ -8,8 +8,8 @@ and checking these tests notice.
 
 from __future__ import annotations
 
+import re
 import sqlite3
-import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -30,7 +30,7 @@ from finder.store.models import (
     Score,
     Trigger,
 )
-from finder.store.repos import RepoError, Store
+from finder.store.repos import RUN_COUNTERS, RepoError, Store
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -605,23 +605,47 @@ def test_unit_of_work_commits_together(store: Store) -> None:
 # --- the architectural boundary --------------------------------------------
 
 
+RAW_SQL = re.compile(r"import sqlite3|\bconn\.execute(many)?\(")
+
+
+def raw_sql_offenders(package: Path) -> list[str]:
+    """Modules outside ``package/store`` that touch SQL directly.
+
+    Walks the working tree rather than shelling out to `git grep`, which only
+    sees tracked files — a brand-new module, the moment this rule is easiest to
+    break, was invisible to the tracked-only version until it was committed.
+    One was.
+    """
+    store = package / "store"
+    return sorted(
+        path.relative_to(package).as_posix()
+        for path in package.rglob("*.py")
+        if store not in path.parents and RAW_SQL.search(path.read_text(encoding="utf-8"))
+    )
+
+
 def test_no_raw_sql_outside_the_store_package() -> None:
     """The guarantee that makes the founder-owned guard enforceable.
 
     If any worker can open its own cursor, the repository layer is decoration.
     """
-    result = subprocess.run(
-        ["git", "grep", "-l", "-E", r"import sqlite3|conn\.execute\(", "--", "src/finder"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
-    offenders = [
-        line
-        for line in result.stdout.splitlines()
-        if line.strip() and not line.startswith("src/finder/store/")
-    ]
+    offenders = raw_sql_offenders(ROOT / "src" / "finder")
     assert not offenders, f"raw SQL outside src/finder/store/: {offenders}"
+
+
+def test_the_raw_sql_guard_can_actually_fail(tmp_path: Path) -> None:
+    """A guard that cannot fail is decoration, so run the real scanner on a
+    tree that breaks the rule and confirm it names the offender."""
+    (tmp_path / "store").mkdir()
+    (tmp_path / "store" / "repos.py").write_text("import sqlite3\n", encoding="utf-8")
+    (tmp_path / "clean.py").write_text("from finder.store.repos import Store\n", encoding="utf-8")
+    assert raw_sql_offenders(tmp_path) == []
+
+    (tmp_path / "harvest").mkdir()
+    (tmp_path / "harvest" / "worker.py").write_text(
+        "rows = self.conn.execute('SELECT 1')\n", encoding="utf-8"
+    )
+    assert raw_sql_offenders(tmp_path) == ["harvest/worker.py"]
 
 
 def test_founder_owned_tables_are_declared() -> None:
@@ -798,3 +822,125 @@ def test_empty_json_columns_round_trip_as_empty_lists(store: Store) -> None:
     assert org.sectors == [] and org.aliases == []
     route = store.routes.upsert(make_route(org.org_id))
     assert route.unresolved == []
+
+
+# --- the run ledger --------------------------------------------------------
+
+
+def test_run_repo_round_trips_a_run(store: Store) -> None:
+    run = store.runs.start("r-1", "weekly", config_hash="cfg-1")
+    assert run.status == "running"
+    assert run.counters == dict.fromkeys(RUN_COUNTERS, 0)
+    assert run.not_reached == []
+    assert store.runs.count() == 1
+
+    store.runs.bump("r-1", "pages_fetched", 3)
+    store.runs.bump("r-1", "pages_fetched")
+    store.runs.append_not_reached("r-1", {"reason": "budget", "detail": "300 of 800", "count": 500})
+    store.runs.finish("r-1", status="budget_stopped", error=None, cost_usd=1.25)
+
+    done = store.runs.get("r-1")
+    assert done.status == "budget_stopped"
+    assert done.counters["pages_fetched"] == 4
+    assert done.cost_usd == 1.25
+    assert done.not_reached == [{"reason": "budget", "detail": "300 of 800", "count": 500}]
+    assert done.finished_at is not None
+
+
+def test_run_repo_rejects_an_unknown_counter(store: Store) -> None:
+    """The counter name is interpolated into SQL, so the whitelist is load-bearing."""
+    store.runs.start("r-1", "weekly")
+    with pytest.raises(RepoError, match="unknown run counter"):
+        store.runs.bump("r-1", "cost_usd", 1)
+
+
+def test_appending_truncation_to_a_missing_run_is_an_error(store: Store) -> None:
+    with pytest.raises(RepoError, match="no such run"):
+        store.runs.append_not_reached("nope", {"reason": "x", "detail": "y", "count": 1})
+
+
+def test_a_corrupt_not_reached_column_reads_as_empty_not_as_a_crash(store: Store) -> None:
+    """Defensive: a hand-edited row must not take down the report."""
+    store.runs.start("r-1", "weekly")
+    store.conn.execute("UPDATE run SET not_reached = '{\"oops\": 1}' WHERE run_id = 'r-1'")
+    assert store.runs.get("r-1").not_reached == []
+
+
+def test_reopen_clears_the_finish_stamp(store: Store) -> None:
+    store.runs.start("r-1", "weekly")
+    store.runs.finish("r-1", status="ok", error=None, cost_usd=0.0)
+    store.runs.reopen("r-1")
+    run = store.runs.get("r-1")
+    assert (run.status, run.finished_at) == ("running", None)
+
+
+def test_unknown_run_reads_as_none(store: Store) -> None:
+    assert store.runs.get("nope") is None
+    assert store.runs.last() is None
+    assert store.runs.unfinished() == []
+
+
+# --- checkpoints -----------------------------------------------------------
+
+
+def test_stage_run_repo_tracks_item_state(store: Store) -> None:
+    store.runs.start("r-1", "weekly")
+    assert store.stage_runs.status("r-1", "map", "org-1") is None
+
+    store.stage_runs.start_item("r-1", "map", "org-1")
+    assert store.stage_runs.status("r-1", "map", "org-1") == "running"
+    assert store.stage_runs.finished_keys("r-1", "map") == set()
+
+    assert store.stage_runs.finish_item("r-1", "map", "org-1", "done", None) is True
+    assert store.stage_runs.finished_keys("r-1", "map") == {"org-1"}
+    assert store.stage_runs.summary("r-1", "map") == {"done": 1}
+    assert store.stage_runs.count() == 1
+
+
+def test_finishing_an_unclaimed_item_reports_false(store: Store) -> None:
+    """The caller turns this into an error; the repo must not pretend it worked."""
+    assert store.stage_runs.finish_item("r-1", "map", "ghost", "done", None) is False
+
+
+def test_reclaiming_an_item_clears_the_previous_outcome(store: Store) -> None:
+    """A retried item must not carry last attempt's error into this one."""
+    store.runs.start("r-1", "weekly")
+    store.stage_runs.start_item("r-1", "map", "org-1")
+    store.stage_runs.finish_item("r-1", "map", "org-1", "failed", "timeout")
+    store.stage_runs.start_item("r-1", "map", "org-1")
+
+    row = store.conn.execute(
+        "SELECT status, error, finished_at FROM stage_run WHERE item_key = 'org-1'"
+    ).fetchone()
+    assert (row["status"], row["error"], row["finished_at"]) == ("running", None, None)
+
+
+def test_finished_keys_counts_every_terminal_state(store: Store) -> None:
+    store.runs.start("r-1", "weekly")
+    for key, status in (("a", "done"), ("b", "failed"), ("c", "skipped"), ("d", "running")):
+        store.stage_runs.start_item("r-1", "map", key)
+        if status != "running":
+            store.stage_runs.finish_item("r-1", "map", key, status, None)
+    assert store.stage_runs.finished_keys("r-1", "map") == {"a", "b", "c"}
+
+
+# --- spend -----------------------------------------------------------------
+
+
+def test_cost_repo_totals_and_splits_by_provider(store: Store) -> None:
+    store.costs.record("c-1", "r-1", "firecrawl", "scrape", units=10, usd=0.01)
+    store.costs.record("c-2", "r-1", "firecrawl", "map", usd=0.002)
+    store.costs.record("c-3", "r-1", "llm", "extract", usd=0.15)
+    store.costs.record("c-4", "r-2", "llm", "extract", usd=99.0)
+
+    assert store.costs.total("r-1") == pytest.approx(0.162)
+    assert store.costs.by_provider("r-1") == {
+        "firecrawl": pytest.approx(0.012),
+        "llm": pytest.approx(0.15),
+    }
+    assert store.costs.count() == 4
+
+
+def test_a_run_with_no_cost_events_totals_zero(store: Store) -> None:
+    assert store.costs.total("r-1") == 0.0
+    assert store.costs.by_provider("r-1") == {}
