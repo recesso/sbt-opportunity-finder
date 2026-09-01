@@ -46,5 +46,7 @@ source = ["src/finder"]
 exclude_also = [
   "if TYPE_CHECKING:",
   "raise NotImplementedError",
+  # Protocol method bodies. There is nothing there to execute.
+  '^\s*\.\.\.$',
 ]
 show_missing = true

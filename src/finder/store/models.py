@@ -200,3 +200,25 @@ class Run:
     cost_usd: float = 0.0
     not_reached: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FetchRecord:
+    """What is known about one URL: which snapshot it produced, and when.
+
+    ``first_fetched_at`` never moves and ``change_count`` only rises when the
+    content hash actually changes, so a page's stability is readable without a
+    separate history table.
+    """
+
+    url: str
+    content_hash: str
+    status: int
+    provider: str
+    first_fetched_at: str
+    last_fetched_at: str
+    canonical_url: str | None = None
+    is_pdf: bool = False
+    links: list[str] = field(default_factory=list)
+    fetch_count: int = 1
+    change_count: int = 0

@@ -26,6 +26,7 @@ from finder.store.db import transaction, utcnow
 from finder.store.models import (
     Employer,
     Evidence,
+    FetchRecord,
     FounderMark,
     Organization,
     Person,
@@ -1016,6 +1017,99 @@ class CostRepo(_Repo):
 # --------------------------------------------------------------------------
 
 
+class FetchLogRepo(_Repo):
+    """One row per URL, pointing at the snapshot it produced.
+
+    Snapshots are addressed by content, which is right for the audit trail and
+    useless for answering "have I already fetched this page today?". This is the
+    other half of that question.
+    """
+
+    def get(self, url: str) -> FetchRecord | None:
+        row = self._one("SELECT * FROM fetch_log WHERE url = ?", (url,))
+        return self._row(row) if row else None
+
+    def record(
+        self,
+        url: str,
+        *,
+        content_hash: str,
+        status: int,
+        provider: str,
+        canonical_url: str | None = None,
+        is_pdf: bool = False,
+        links: Sequence[str] = (),
+        fetched_at: str | None = None,
+    ) -> FetchRecord:
+        """Log a live fetch.
+
+        ``first_fetched_at`` is preserved on conflict and ``change_count`` rises
+        only when the hash actually changed — a page re-fetched unchanged is not
+        a change, and counting it as one would make every page look volatile.
+        """
+        now = fetched_at or utcnow()
+        self._exec(
+            "INSERT INTO fetch_log (url, content_hash, canonical_url, status, is_pdf,"
+            " provider, links, first_fetched_at, last_fetched_at, fetch_count, change_count)"
+            " VALUES (?,?,?,?,?,?,?,?,?,1,0)"
+            " ON CONFLICT(url) DO UPDATE SET"
+            "   content_hash = excluded.content_hash,"
+            "   canonical_url = excluded.canonical_url,"
+            "   status = excluded.status,"
+            "   is_pdf = excluded.is_pdf,"
+            "   provider = excluded.provider,"
+            "   links = excluded.links,"
+            "   last_fetched_at = excluded.last_fetched_at,"
+            "   fetch_count = fetch_log.fetch_count + 1,"
+            "   change_count = fetch_log.change_count"
+            "     + (CASE WHEN fetch_log.content_hash = excluded.content_hash THEN 0 ELSE 1 END)",
+            (
+                url,
+                content_hash,
+                canonical_url,
+                status,
+                1 if is_pdf else 0,
+                provider,
+                _dump(list(links)),
+                now,
+                now,
+            ),
+        )
+        got = self.get(url)
+        if got is None:  # pragma: no cover - insert succeeded or raised
+            raise RepoError(f"fetch_log row for {url} did not persist")
+        return got
+
+    def by_hash(self, content_hash: str) -> list[FetchRecord]:
+        """Every URL that produced this snapshot. Mirrors and redirects show up
+        here, which is how one page stops becoming three organizations."""
+        return [
+            self._row(r)
+            for r in self._all(
+                "SELECT * FROM fetch_log WHERE content_hash = ? ORDER BY url", (content_hash,)
+            )
+        ]
+
+    def count(self) -> int:
+        return self._one("SELECT COUNT(*) c FROM fetch_log")["c"]  # type: ignore[index]
+
+    @staticmethod
+    def _row(row: sqlite3.Row) -> FetchRecord:
+        return FetchRecord(
+            url=row["url"],
+            content_hash=row["content_hash"],
+            canonical_url=row["canonical_url"],
+            status=row["status"],
+            is_pdf=bool(row["is_pdf"]),
+            provider=row["provider"],
+            links=_json_list(row["links"]),
+            first_fetched_at=row["first_fetched_at"],
+            last_fetched_at=row["last_fetched_at"],
+            fetch_count=row["fetch_count"],
+            change_count=row["change_count"],
+        )
+
+
 class Store:
     """All repositories over one connection, plus the unit of work.
 
@@ -1037,6 +1131,7 @@ class Store:
         self.runs = RunRepo(conn)
         self.stage_runs = StageRunRepo(conn)
         self.costs = CostRepo(conn)
+        self.fetch_log = FetchLogRepo(conn)
 
     @contextmanager
     def unit_of_work(self) -> Iterator[Store]:

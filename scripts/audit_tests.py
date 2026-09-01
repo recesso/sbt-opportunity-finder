@@ -497,6 +497,150 @@ MUTATIONS: list[Mutation] = [
         why="Each clause is a failure the predecessor actually made. Dropping one is "
         "how last year's closed call comes back as this year's opportunity.",
     ),
+    # --- acquisition: snapshots and the fetch cache ------------------------
+    Mutation(
+        name="snapshot-overwritten",
+        path="src/finder/acquire/snapshot.py",
+        old="        if path.exists():",
+        new="        if False:",
+        why="Rewriting a stored snapshot rewrites history, and history is the only "
+        "thing the store exists for. Every past extraction becomes unverifiable.",
+    ),
+    Mutation(
+        name="snapshot-hash-ignores-whitespace-rule",
+        path="src/finder/acquire/snapshot.py",
+        old='    return _WHITESPACE.sub(" ", text).strip()',
+        new="    return text",
+        why="Providers re-wrap markdown between calls. Hashing raw bytes stores the "
+        "same page a dozen times and defeats both the cache and the audit.",
+    ),
+    Mutation(
+        name="snapshot-key-unvalidated",
+        path="src/finder/acquire/snapshot.py",
+        old="        if not _HASH_RE.match(digest):",
+        new="        if False:",
+        why="A snapshot is addressed by content, never by a name someone chose. An "
+        "unvalidated key is also a path-traversal write into the data directory.",
+    ),
+    Mutation(
+        name="missing-snapshot-reads-as-empty",
+        path="src/finder/acquire/snapshot.py",
+        old="        if not path.exists():",
+        new="        if False:",
+        why="An empty string reads like a page that said nothing, and the extractor "
+        "would faithfully record not_stated for a page it never saw.",
+    ),
+    Mutation(
+        name="snapshot-write-not-atomic",
+        path="src/finder/acquire/snapshot.py",
+        old="            os.replace(tmp, path)",
+        new="            path.write_bytes(tmp.read_bytes()[:-1])",
+        why="A process killed mid-write must leave nothing or a whole file, never a "
+        "truncated archive that reads as a valid but shorter page.",
+    ),
+    Mutation(
+        name="cache-never-hits",
+        path="src/finder/acquire/fetch.py",
+        old="        cached = self._from_cache(url, max_age)",
+        new="        cached = None",
+        why="Re-fetching every page every run is what the cache exists to prevent; "
+        "the bill and the rate limit both notice.",
+    ),
+    Mutation(
+        name="cache-ignores-age",
+        path="src/finder/acquire/fetch.py",
+        old="        if record is None or age_seconds(record.last_fetched_at) > max_age_s:",
+        new="        if record is None:",
+        why="A cache with no expiry serves last year's page forever, and a deadline "
+        "that appeared on Tuesday is never seen.",
+    ),
+    Mutation(
+        name="cache-hit-without-the-bytes",
+        path="src/finder/acquire/fetch.py",
+        old="        if not self.snapshots.has(record.content_hash):",
+        new="        if False:",
+        why="If the index outlives the bytes, a hit raises instead of re-fetching and "
+        "the page becomes permanently unreadable.",
+    ),
+    Mutation(
+        name="future-timestamp-reads-as-fresh",
+        path="src/finder/acquire/fetch.py",
+        old="    return max(0.0, (current - then).total_seconds())",
+        new="    return (current - then).total_seconds()",
+        why="Clock skew produces a negative age, which makes a stale page look "
+        "permanently fresh and it is never re-read.",
+    ),
+    Mutation(
+        name="failed-call-never-billed",
+        path="src/finder/acquire/fetch.py",
+        old="            self.stats.failures += 1\n            self._charge(run, cost_usd)",
+        new="            self.stats.failures += 1",
+        why="A ledger that counts only successes understates the bill exactly when "
+        "things are going wrong and spend is spiking.",
+    ),
+    Mutation(
+        name="snapshot-indexed-before-it-is-stored",
+        path="src/finder/acquire/fetch.py",
+        old="        self.snapshots.put(snapshot.markdown)\n        self.store.fetch_log.record(",
+        new="        self.store.fetch_log.record(",
+        why="Extraction reads only from the store, so an index entry pointing at bytes "
+        "that were never written is a page that cannot be read.",
+    ),
+    Mutation(
+        name="empty-page-accepted",
+        path="src/finder/acquire/providers/firecrawl.py",
+        old="        if not markdown.strip():",
+        new="        if False:",
+        why="A blank snapshot extracts cleanly as 'the page states nothing', which is "
+        "indistinguishable from a real thin page and is a lie about a failed fetch.",
+    ),
+    Mutation(
+        name="permanent-failures-retried",
+        path="src/finder/acquire/providers/firecrawl.py",
+        old="                if not exc.retryable:",
+        new="                if False:",
+        why="Retrying a 404 three times burns budget and hides the answer.",
+    ),
+    Mutation(
+        name="retries-unbounded",
+        path="src/finder/acquire/providers/firecrawl.py",
+        old="                if attempt < self.max_attempts:",
+        new="                if True:",
+        why="An unbounded retry against a rate limiter turns one bad page into a stalled run.",
+    ),
+    Mutation(
+        name="rate-limit-not-retryable",
+        path="src/finder/acquire/providers/firecrawl.py",
+        old="RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})",
+        new="RETRYABLE_STATUS = frozenset({500})",
+        why="A 429 is the single most common transient failure; not retrying it drops "
+        "pages that were one short wait away.",
+    ),
+    Mutation(
+        name="resolved-url-collapsed-into-requested",
+        path="src/finder/acquire/providers/firecrawl.py",
+        old='canonical_url=str(metadata.get("sourceURL") or url),',
+        new="canonical_url=url,",
+        why="Conflating where a page resolved with what was requested is how one page "
+        "ends up in the database three times, under three organizations.",
+    ),
+    Mutation(
+        name="unchanged-refetch-counted-as-change",
+        path="src/finder/store/repos.py",
+        old="     + (CASE WHEN fetch_log.content_hash = excluded.content_hash THEN 0 ELSE 1 END)",
+        new="     + 1",
+        why="Counting a re-read as a change makes every page look volatile and destroys "
+        "the only stability signal the fetch log carries.",
+    ),
+    Mutation(
+        name="first-fetch-timestamp-moves",
+        path="src/finder/store/repos.py",
+        old='            "   last_fetched_at = excluded.last_fetched_at,"',
+        new='            "   first_fetched_at = excluded.first_fetched_at,'
+        ' last_fetched_at = excluded.last_fetched_at,"',
+        why="first_fetched_at is the anchor for how long a page has been known; moving "
+        "it makes every page look newly discovered.",
+    ),
 ]
 
 
