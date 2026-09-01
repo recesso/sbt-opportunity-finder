@@ -1,7 +1,7 @@
 # CONTINUE HERE
 
-**Last updated:** 2026-09-01 · E0.S1–S3, E1.S1, E1.S2, E1.S4 done. 193 tests, 95% branch
-coverage, 24/24 mutations caught.
+**Last updated:** 2026-09-01 · E0.S1–S5, E1.S1, E1.S2, E1.S4 done. 241 tests, 96% branch
+coverage, 41/41 mutations caught.
 
 If you are a new session or a new engineer, read this file, then `CLAUDE.md`, then run `bd ready`.
 That is the whole orientation.
@@ -12,13 +12,13 @@ That is the whole orientation.
 
 | | |
 |---|---|
-| **Done** | E0.S1 tooling and CI · E0.S2 config · E0.S3 secrets and redaction · E1.S1 schema · E1.S2 repositories · E1.S4 dedupe keys |
-| **Next** | `bd ready` → **E1.S3** (founder write guard), **E0.S4** (run harness), **E0.S5** (cost ledger), **E4.S1** (marker gate), **E5.S1** (extraction schemas) |
+| **Done** | E0.S1 tooling and CI · E0.S2 config · E0.S3 secrets and redaction · E0.S4 run harness · E0.S5 cost ledger · E1.S1 schema · E1.S2 repositories · E1.S4 dedupe keys |
+| **Next** | `bd ready` → **E5.S1** (extraction schemas), **E2.S1** (fetch provider), **E1.S3** (founder write guard), **E4.S1** (marker gate) |
 | **Nothing is running** | No scheduled jobs, no data collected, no live database yet |
 
 ```bash
 make install
-make check      # lint + 193 tests, offline, ~5s
+make check      # lint + 241 tests, offline, ~10s
 make cov        # branch coverage, fails under 88%
 make audit      # breaks the code on purpose; every mutation must be caught
 bd ready
@@ -26,7 +26,7 @@ bd ready
 
 ## How this project judges its own tests
 
-`make audit` is not optional decoration. It applies 24 specific mutations — each one a real bug a
+`make audit` is not optional decoration. It applies 41 specific mutations — each one a real bug a
 competent engineer could introduce — and fails if the suite does not notice. **A passing suite
 proves nothing; a suite that catches deliberate sabotage proves something.** CI runs it on every
 push alongside a branch-coverage floor.
@@ -45,9 +45,12 @@ code moved out from under it — fix the mutation, do not delete it.
 - `src/finder/secrets.py` + `src/finder/logging.py` — env-only secrets, `require()` reporting all
   missing keys at once, and a structlog processor that makes it impossible for a key to appear in
   a log line.
-- `src/finder/store/` — schema and migrations (19 STRICT tables), nine repositories, deterministic
-  ids, and the dedupe keys. All database access lives here; a CI test greps for raw SQL anywhere
-  else.
+- `src/finder/store/` — schema and migrations (19 STRICT tables), twelve repositories,
+  deterministic ids, and the dedupe keys. All database access lives here; a CI test scans the
+  working tree for raw SQL anywhere else.
+- `src/finder/context.py` — the run harness. `start_run` / `resume_run`, per-item `claim()`
+  checkpoints, `item()` for failure isolation, write-through counters, `not_reached`, and the cost
+  ledger. Every worker loop is built on this.
 - `plan/backlog.yaml` — 14 epics, 66 stories, decomposed to atomic steps. Source of truth.
 - `scripts/load_backlog.py` — idempotent loader into Beads.
 - `scripts/audit_tests.py` — the mutation audit.
@@ -56,17 +59,17 @@ code moved out from under it — fix the mutation, do not delete it.
 
 ## What does not exist yet
 
-No providers, no workers, no run harness, no live database. Everything under `acquire/`,
-`harvest/`, `precision/`, `extract/`, `resolve/`, `score/`, `ask/`, `output/`, `learn/` and
-`eval/` is still an empty package.
+No providers, no workers, no live database. Everything under `acquire/`, `harvest/`,
+`precision/`, `extract/`, `resolve/`, `score/`, `ask/`, `output/`, `learn/` and `eval/` is still
+an empty package.
 
 ## The next three things, in order
 
-1. **E0.S4** — RunContext and checkpointing. The `stage_run` table exists; the protocol on top of
-   it does not, and every worker loop needs it.
-2. **E5.S1 → E5.S2** — extraction schemas, then the mechanism extractor. **E5.S2 is the
+1. **E5.S1 → E5.S2** — extraction schemas, then the mechanism extractor. **E5.S2 is the
    highest-risk story in the plan.** Every downstream number inherits its quality and no plumbing
    fixes a bad extractor. Build it against the ten labelled pages first.
+2. **E2.S1** — the FetchProvider protocol and the Firecrawl adapter. First real network code, and
+   the first place the run harness carries live work.
 3. **E1.S3** — the founder-owned write guard. The schema already separates the tables; this adds
    the runtime assertion and the audit trail.
 
@@ -93,6 +96,17 @@ Milestone M1 is the thinnest slice that produces a real ranked list:
 - **The 500-pair dedupe score is 1.0/1.0 and that is not impressive.** Those pairs are easy by
   construction. The real signal is `tests/fixtures/dedupe_hard_cases.json` — 26 hand-curated pairs,
   four of which failed on the first run and drove real design changes.
+- **A killed process is now a tested case, not a hope.** `tests/test_context.py` starts a real
+  subprocess, kills it with `os._exit(137)` at item 47, and restarts it against the same SQLite
+  file. The 46 completed items are not redone, the mid-flight 47th is, and the counters and the
+  spend both survive the kill. Anything less than a real kill would only prove the mock works.
+- **Counters and `not_reached` write through to the run row.** They were totalled in memory and
+  written at close — which loses them exactly when a run dies, the case whose report matters most.
+- **`context.py` had to give up its cursors.** `test_no_raw_sql_outside_the_store_package` caught
+  it and the code moved into `RunRepo`, `StageRunRepo` and `CostRepo`; `RunContext` holds a
+  `Store`. The guard itself had a hole: it ran `git grep`, which sees only **tracked** files, so a
+  brand-new module was invisible to it until commit. It now walks the working tree, and a second
+  test runs the same scanner over a deliberately broken tree so it can be shown to fail.
 
 ## Three routes already verified by hand
 
