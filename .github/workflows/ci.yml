@@ -38,8 +38,13 @@ jobs:
       - name: Format check
         run: ruff format --check src tests scripts
 
-      - name: Test
-        run: pytest -q
+      - name: Test with branch coverage
+        run: pytest -q --cov=finder --cov-branch --cov-report=term-missing --cov-fail-under=88
+
+      - name: Mutation audit
+        # Passing tests prove nothing on their own. This breaks the code on
+        # purpose and fails the build if the suite does not notice.
+        run: python scripts/audit_tests.py
 
       - name: Backlog is loadable and internally consistent
         run: python scripts/load_backlog.py --dry-run

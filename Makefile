@@ -1,4 +1,4 @@
-.PHONY: install test lint fmt check run-weekly run-daily run-monthly backlog ready
+.PHONY: install test lint fmt check audit cov run-weekly run-daily run-monthly backlog ready
 
 install:
 	python -m pip install -e ".[dev]"
@@ -13,6 +13,12 @@ fmt:
 	ruff format src tests scripts
 
 check: lint test
+
+cov:                ## branch coverage; fails under the floor
+	pytest -q --cov=finder --cov-branch --cov-report=term-missing --cov-fail-under=88
+
+audit:              ## break the code on purpose; every mutation must be caught
+	python scripts/audit_tests.py
 
 run-weekly:
 	python -m finder.run weekly

@@ -1,6 +1,7 @@
 # CONTINUE HERE
 
-**Last updated:** 2026-09-01 · E0.S1, E0.S2 and E0.S3 done. 54 tests green.
+**Last updated:** 2026-09-01 · E0.S1–S3, E1.S1, E1.S2 done. 129 tests, 95% branch coverage,
+18/18 mutations caught.
 
 If you are a new session or a new engineer, read this file, then `CLAUDE.md`, then run `bd ready`.
 That is the whole orientation.
@@ -11,15 +12,27 @@ That is the whole orientation.
 
 | | |
 |---|---|
-| **Done** | E0.S1 tooling and CI · E0.S2 config loading and validation · E0.S3 secrets and log redaction |
-| **Next** | `bd ready` → **E1.S1** (SQLite schema) and **E0.S5** (logging + cost ledger) are both unblocked |
-| **Blocked on E1.S1** | E0.S4 (run harness) needs the `stage_run` table |
-| **Nothing is running** | No scheduled jobs, no data collected, no database created yet |
+| **Done** | E0.S1 tooling and CI · E0.S2 config · E0.S3 secrets and redaction · E1.S1 schema · E1.S2 repositories |
+| **Next** | `bd ready` → **E1.S3** (founder write guard), **E1.S4** (dedupe keys), **E0.S4** (run harness), **E0.S5** (cost ledger) |
+| **Nothing is running** | No scheduled jobs, no data collected, no live database yet |
 
 ```bash
-make install && make check     # 54 tests, offline, ~2s
+make install
+make check      # lint + 129 tests, offline, ~3s
+make cov        # branch coverage, fails under 88%
+make audit      # breaks the code on purpose; every mutation must be caught
 bd ready
 ```
+
+## How this project judges its own tests
+
+`make audit` is not optional decoration. It applies 18 specific mutations — each one a real bug a
+competent engineer could introduce — and fails if the suite does not notice. **A passing suite
+proves nothing; a suite that catches deliberate sabotage proves something.** CI runs it on every
+push alongside a branch-coverage floor.
+
+If you add behaviour worth protecting, add a mutation for it. If a mutation reports `STALE`, the
+code moved out from under it — fix the mutation, do not delete it.
 
 ## What exists
 

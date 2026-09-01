@@ -1,0 +1,750 @@
+"""Repositories — the only place raw SQL lives.
+
+Enforced by a CI check: ``import sqlite3`` outside ``src/finder/store/`` fails
+the build. Everything else in the system works with the dataclasses in
+``models.py``.
+
+Only the entities on the M1 path plus the founder-owned ones are implemented.
+Repositories for occurrence, network, signal and cost_event are deliberately
+deferred until a worker actually writes them — an unused abstraction is a
+liability, not a head start. The tables exist; the accessors arrive with the
+code that needs them.
+
+Founder-owned tables (``founder_mark``, ``person_founder``) are reachable only
+through :class:`MarkRepo`, which has no generic update path. E1.S3 adds the
+runtime guard on top of that structural separation.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from typing import Any
+
+from finder.store.db import transaction, utcnow
+from finder.store.models import (
+    Employer,
+    Evidence,
+    FounderMark,
+    Organization,
+    Person,
+    Rejection,
+    Route,
+    Score,
+    Trigger,
+)
+
+FOUNDER_OWNED_TABLES: frozenset[str] = frozenset({"founder_mark", "person_founder"})
+
+
+class RepoError(Exception):
+    """A write that the schema or the repository layer refused."""
+
+
+def _json_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    parsed = json.loads(value)
+    return list(parsed) if isinstance(parsed, list) else []
+
+
+def _dump(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+class _Repo:
+    """Shared plumbing. Not an abstraction — just the two lines every repo needs."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self.conn = conn
+
+    def _exec(self, sql: str, params: Sequence[Any] = ()) -> sqlite3.Cursor:
+        try:
+            return self.conn.execute(sql, tuple(params))
+        except sqlite3.IntegrityError as exc:
+            raise RepoError(str(exc)) from exc
+
+    def _one(self, sql: str, params: Sequence[Any] = ()) -> sqlite3.Row | None:
+        return self.conn.execute(sql, tuple(params)).fetchone()
+
+    def _all(self, sql: str, params: Sequence[Any] = ()) -> list[sqlite3.Row]:
+        return self.conn.execute(sql, tuple(params)).fetchall()
+
+    def count(self) -> int:
+        raise NotImplementedError
+
+
+# --------------------------------------------------------------------------
+
+
+class OrganizationRepo(_Repo):
+    TABLE = "organization"
+
+    def upsert(self, org: Organization) -> Organization:
+        """Insert, or update on canonical_domain conflict.
+
+        ``first_seen`` is preserved on update: when an organization was first
+        discovered is a fact about history, not about this run.
+        """
+        self._exec(
+            """
+            INSERT INTO organization (
+                org_id, canonical_domain, name, name_normalized, aliases, org_type,
+                network_id, member_unit, employer_reach_est, sectors, geo_city,
+                geo_state, geo_scope, tier, first_seen, last_mapped, discovered_from
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(canonical_domain) DO UPDATE SET
+                name = excluded.name,
+                name_normalized = excluded.name_normalized,
+                aliases = excluded.aliases,
+                org_type = COALESCE(excluded.org_type, organization.org_type),
+                network_id = COALESCE(excluded.network_id, organization.network_id),
+                member_unit = COALESCE(excluded.member_unit, organization.member_unit),
+                employer_reach_est = COALESCE(
+                    excluded.employer_reach_est, organization.employer_reach_est),
+                sectors = excluded.sectors,
+                geo_city = COALESCE(excluded.geo_city, organization.geo_city),
+                geo_state = COALESCE(excluded.geo_state, organization.geo_state),
+                geo_scope = COALESCE(excluded.geo_scope, organization.geo_scope),
+                tier = excluded.tier,
+                last_mapped = COALESCE(excluded.last_mapped, organization.last_mapped),
+                discovered_from = COALESCE(
+                    excluded.discovered_from, organization.discovered_from)
+            """,
+            (
+                org.org_id, org.canonical_domain, org.name, org.name_normalized,
+                _dump(org.aliases), org.org_type, org.network_id, org.member_unit,
+                org.employer_reach_est, _dump(org.sectors), org.geo_city, org.geo_state,
+                org.geo_scope, org.tier, org.first_seen, org.last_mapped, org.discovered_from,
+            ),
+        )
+        got = self.get(org.org_id) or self.get_by_domain(org.canonical_domain)
+        if got is None:  # pragma: no cover - would mean the write vanished
+            raise RepoError(f"upsert of {org.canonical_domain} did not persist")
+        return got
+
+    def get(self, org_id: str) -> Organization | None:
+        row = self._one("SELECT * FROM organization WHERE org_id = ?", (org_id,))
+        return self._row(row) if row else None
+
+    def get_by_domain(self, domain: str) -> Organization | None:
+        row = self._one("SELECT * FROM organization WHERE canonical_domain = ?", (domain,))
+        return self._row(row) if row else None
+
+    def find_by_normalized_name(self, name_normalized: str) -> list[Organization]:
+        rows = self._all(
+            "SELECT * FROM organization WHERE name_normalized = ?", (name_normalized,)
+        )
+        return [self._row(r) for r in rows]
+
+    def due_for_mapping(self, tier: str, before: str) -> list[Organization]:
+        """Tier A weekly, B biweekly, C monthly — the caller supplies the cutoff."""
+        rows = self._all(
+            "SELECT * FROM organization WHERE tier = ?"
+            " AND (last_mapped IS NULL OR last_mapped < ?) ORDER BY last_mapped IS NOT NULL,"
+            " last_mapped",
+            (tier, before),
+        )
+        return [self._row(r) for r in rows]
+
+    def mark_mapped(self, org_id: str, when: str | None = None) -> None:
+        self._exec(
+            "UPDATE organization SET last_mapped = ? WHERE org_id = ?",
+            (when or utcnow(), org_id),
+        )
+
+    def count(self) -> int:
+        return self._one("SELECT COUNT(*) c FROM organization")["c"]  # type: ignore[index]
+
+    @staticmethod
+    def _row(row: sqlite3.Row) -> Organization:
+        return Organization(
+            org_id=row["org_id"],
+            canonical_domain=row["canonical_domain"],
+            name=row["name"],
+            name_normalized=row["name_normalized"],
+            first_seen=row["first_seen"],
+            aliases=_json_list(row["aliases"]),
+            org_type=row["org_type"],
+            network_id=row["network_id"],
+            member_unit=row["member_unit"],
+            employer_reach_est=row["employer_reach_est"],
+            sectors=_json_list(row["sectors"]),
+            geo_city=row["geo_city"],
+            geo_state=row["geo_state"],
+            geo_scope=row["geo_scope"],
+            tier=row["tier"],
+            last_mapped=row["last_mapped"],
+            discovered_from=row["discovered_from"],
+        )
+
+
+class EmployerRepo(_Repo):
+    def upsert(self, emp: Employer) -> Employer:
+        self._exec(
+            """
+            INSERT INTO employer (
+                employer_id, name, name_normalized, domain, naics, site_city,
+                site_state, employee_count, sectors, reached_via_route_id, first_seen
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(employer_id) DO UPDATE SET
+                name = excluded.name,
+                name_normalized = excluded.name_normalized,
+                domain = COALESCE(excluded.domain, employer.domain),
+                naics = COALESCE(excluded.naics, employer.naics),
+                site_city = COALESCE(excluded.site_city, employer.site_city),
+                site_state = COALESCE(excluded.site_state, employer.site_state),
+                employee_count = COALESCE(excluded.employee_count, employer.employee_count),
+                sectors = excluded.sectors,
+                reached_via_route_id = COALESCE(
+                    excluded.reached_via_route_id, employer.reached_via_route_id)
+            """,
+            (
+                emp.employer_id, emp.name, emp.name_normalized, emp.domain, emp.naics,
+                emp.site_city, emp.site_state, emp.employee_count, _dump(emp.sectors),
+                emp.reached_via_route_id, emp.first_seen,
+            ),
+        )
+        got = self.get(emp.employer_id)
+        if got is None:  # pragma: no cover
+            raise RepoError(f"upsert of employer {emp.employer_id} did not persist")
+        return got
+
+    def get(self, employer_id: str) -> Employer | None:
+        row = self._one("SELECT * FROM employer WHERE employer_id = ?", (employer_id,))
+        if not row:
+            return None
+        return Employer(
+            employer_id=row["employer_id"],
+            name=row["name"],
+            name_normalized=row["name_normalized"],
+            first_seen=row["first_seen"],
+            domain=row["domain"],
+            naics=row["naics"],
+            site_city=row["site_city"],
+            site_state=row["site_state"],
+            employee_count=row["employee_count"],
+            sectors=_json_list(row["sectors"]),
+            reached_via_route_id=row["reached_via_route_id"],
+        )
+
+    def link_to_channel(self, employer_id: str, route_id: str) -> None:
+        """Cross-family link: this employer is reachable through a CHANNEL route.
+
+        When a trigger later fires here, the EMPLOYER route becomes
+        CHANNEL_INTRO because a way in already exists.
+        """
+        self._exec(
+            "UPDATE employer SET reached_via_route_id = ? WHERE employer_id = ?",
+            (route_id, employer_id),
+        )
+
+    def count(self) -> int:
+        return self._one("SELECT COUNT(*) c FROM employer")["c"]  # type: ignore[index]
+
+
+class PersonRepo(_Repo):
+    def upsert(self, person: Person) -> Person:
+        self._exec(
+            """
+            INSERT INTO person (
+                person_id, org_id, employer_id, name, title, email, phone, role,
+                controls, source_url, verified_at, previous_title, leverage_change,
+                change_detected_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(person_id) DO UPDATE SET
+                title = COALESCE(excluded.title, person.title),
+                email = COALESCE(excluded.email, person.email),
+                phone = COALESCE(excluded.phone, person.phone),
+                role = COALESCE(excluded.role, person.role),
+                controls = COALESCE(excluded.controls, person.controls),
+                source_url = COALESCE(excluded.source_url, person.source_url),
+                verified_at = COALESCE(excluded.verified_at, person.verified_at),
+                previous_title = COALESCE(excluded.previous_title, person.previous_title),
+                leverage_change = COALESCE(excluded.leverage_change, person.leverage_change),
+                change_detected_at = COALESCE(
+                    excluded.change_detected_at, person.change_detected_at)
+            """,
+            (
+                person.person_id, person.org_id, person.employer_id, person.name,
+                person.title, person.email, person.phone, person.role, person.controls,
+                person.source_url, person.verified_at, person.previous_title,
+                person.leverage_change, person.change_detected_at,
+            ),
+        )
+        got = self.get(person.person_id)
+        if got is None:  # pragma: no cover
+            raise RepoError(f"upsert of person {person.person_id} did not persist")
+        return got
+
+    def get(self, person_id: str) -> Person | None:
+        row = self._one("SELECT * FROM person WHERE person_id = ?", (person_id,))
+        if not row:
+            return None
+        return Person(
+            person_id=row["person_id"],
+            name=row["name"],
+            org_id=row["org_id"],
+            employer_id=row["employer_id"],
+            title=row["title"],
+            email=row["email"],
+            phone=row["phone"],
+            role=row["role"],
+            controls=row["controls"],
+            source_url=row["source_url"],
+            verified_at=row["verified_at"],
+            previous_title=row["previous_title"],
+            leverage_change=row["leverage_change"],
+            change_detected_at=row["change_detected_at"],
+        )
+
+    def for_organization(self, org_id: str) -> list[Person]:
+        rows = self._all("SELECT person_id FROM person WHERE org_id = ?", (org_id,))
+        return [p for r in rows if (p := self.get(r["person_id"]))]
+
+    def count(self) -> int:
+        return self._one("SELECT COUNT(*) c FROM person")["c"]  # type: ignore[index]
+
+
+class RouteRepo(_Repo):
+    def upsert(self, route: Route) -> Route:
+        self._exec(
+            """
+            INSERT INTO route (
+                route_id, family, org_id, employer_id, person_id, mechanism_name,
+                route_type, route_url, route_url_is_offdomain, evidence_url,
+                eligibility, owner_person_id, series_key, status, surface,
+                excluded_by_rule_id, unresolved, created_at, last_verified
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(series_key) DO UPDATE SET
+                mechanism_name = excluded.mechanism_name,
+                route_type = excluded.route_type,
+                route_url = COALESCE(excluded.route_url, route.route_url),
+                route_url_is_offdomain = excluded.route_url_is_offdomain,
+                evidence_url = COALESCE(excluded.evidence_url, route.evidence_url),
+                eligibility = COALESCE(excluded.eligibility, route.eligibility),
+                owner_person_id = COALESCE(excluded.owner_person_id, route.owner_person_id),
+                status = excluded.status,
+                surface = excluded.surface,
+                unresolved = excluded.unresolved,
+                last_verified = COALESCE(excluded.last_verified, route.last_verified)
+            """,
+            (
+                route.route_id, route.family, route.org_id, route.employer_id,
+                route.person_id, route.mechanism_name, route.route_type, route.route_url,
+                int(route.route_url_is_offdomain), route.evidence_url, route.eligibility,
+                route.owner_person_id, route.series_key, route.status, route.surface,
+                route.excluded_by_rule_id, _dump(route.unresolved), route.created_at,
+                route.last_verified,
+            ),
+        )
+        got = self.get_by_series_key(route.series_key)
+        if got is None:  # pragma: no cover
+            raise RepoError(f"upsert of route {route.series_key} did not persist")
+        return got
+
+    def get(self, route_id: str) -> Route | None:
+        row = self._one("SELECT * FROM route WHERE route_id = ?", (route_id,))
+        return self._row(row) if row else None
+
+    def get_by_series_key(self, series_key: str) -> Route | None:
+        row = self._one("SELECT * FROM route WHERE series_key = ?", (series_key,))
+        return self._row(row) if row else None
+
+    def by_surface(self, surface: str, family: str | None = None) -> list[Route]:
+        if family:
+            rows = self._all(
+                "SELECT * FROM route WHERE surface = ? AND family = ?", (surface, family)
+            )
+        else:
+            rows = self._all("SELECT * FROM route WHERE surface = ?", (surface,))
+        return [self._row(r) for r in rows]
+
+    def exclude(self, route_id: str, rule_id: str) -> None:
+        """Rejected routes are retained with the reason. Nothing is ever deleted."""
+        self._exec(
+            "UPDATE route SET status = 'excluded', surface = 'LIBRARY',"
+            " excluded_by_rule_id = ? WHERE route_id = ?",
+            (rule_id, route_id),
+        )
+
+    def set_surface(self, route_id: str, surface: str) -> None:
+        self._exec("UPDATE route SET surface = ? WHERE route_id = ?", (surface, route_id))
+
+    def count(self) -> int:
+        return self._one("SELECT COUNT(*) c FROM route")["c"]  # type: ignore[index]
+
+    @staticmethod
+    def _row(row: sqlite3.Row) -> Route:
+        return Route(
+            route_id=row["route_id"],
+            family=row["family"],
+            mechanism_name=row["mechanism_name"],
+            route_type=row["route_type"],
+            series_key=row["series_key"],
+            created_at=row["created_at"],
+            org_id=row["org_id"],
+            employer_id=row["employer_id"],
+            person_id=row["person_id"],
+            route_url=row["route_url"],
+            route_url_is_offdomain=bool(row["route_url_is_offdomain"]),
+            evidence_url=row["evidence_url"],
+            eligibility=row["eligibility"],
+            owner_person_id=row["owner_person_id"],
+            status=row["status"],
+            surface=row["surface"],
+            excluded_by_rule_id=row["excluded_by_rule_id"],
+            unresolved=_json_list(row["unresolved"]),
+            last_verified=row["last_verified"],
+        )
+
+
+class EvidenceRepo(_Repo):
+    def add(self, ev: Evidence) -> Evidence:
+        """Re-extracting the same field from the same snapshot updates in place."""
+        self._exec(
+            """
+            INSERT INTO evidence (
+                ev_id, route_id, org_id, field_name, value, span_text, span_match,
+                source_url, content_hash, snapshot_uri, extractor, prompt_version, fetched_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(ev_id) DO UPDATE SET
+                value = excluded.value,
+                span_text = excluded.span_text,
+                span_match = excluded.span_match,
+                snapshot_uri = excluded.snapshot_uri,
+                extractor = excluded.extractor,
+                prompt_version = excluded.prompt_version,
+                fetched_at = excluded.fetched_at
+            """,
+            (
+                ev.ev_id, ev.route_id, ev.org_id, ev.field_name, ev.value, ev.span_text,
+                ev.span_match, ev.source_url, ev.content_hash, ev.snapshot_uri,
+                ev.extractor, ev.prompt_version, ev.fetched_at,
+            ),
+        )
+        got = self.get(ev.ev_id)
+        if got is None:  # pragma: no cover
+            raise RepoError(f"evidence {ev.ev_id} did not persist")
+        return got
+
+    def get(self, ev_id: str) -> Evidence | None:
+        row = self._one("SELECT * FROM evidence WHERE ev_id = ?", (ev_id,))
+        if not row:
+            return None
+        return Evidence(
+            ev_id=row["ev_id"],
+            field_name=row["field_name"],
+            source_url=row["source_url"],
+            content_hash=row["content_hash"],
+            extractor=row["extractor"],
+            fetched_at=row["fetched_at"],
+            route_id=row["route_id"],
+            org_id=row["org_id"],
+            value=row["value"],
+            span_text=row["span_text"],
+            span_match=row["span_match"],
+            snapshot_uri=row["snapshot_uri"],
+            prompt_version=row["prompt_version"],
+        )
+
+    def for_route(self, route_id: str) -> list[Evidence]:
+        rows = self._all("SELECT ev_id FROM evidence WHERE route_id = ?", (route_id,))
+        return [e for r in rows if (e := self.get(r["ev_id"]))]
+
+    def fields_without_span(self, route_id: str) -> list[str]:
+        """Fields whose span is missing or unfindable.
+
+        A field with no supporting span cannot be written; this is the query
+        that proves it after the fact.
+        """
+        rows = self._all(
+            "SELECT field_name FROM evidence WHERE route_id = ?"
+            " AND (span_text IS NULL OR span_match = 'absent')",
+            (route_id,),
+        )
+        return [r["field_name"] for r in rows]
+
+    def count(self) -> int:
+        return self._one("SELECT COUNT(*) c FROM evidence")["c"]  # type: ignore[index]
+
+
+class ScoreRepo(_Repo):
+    def add(self, score: Score) -> Score:
+        self._exec(
+            "INSERT INTO score (score_id, route_id, scored_at, config_hash, fit,"
+            " route_score, confidence, components) VALUES (?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(score_id) DO UPDATE SET fit = excluded.fit,"
+            " route_score = excluded.route_score, confidence = excluded.confidence,"
+            " components = excluded.components",
+            (
+                score.score_id, score.route_id, score.scored_at, score.config_hash,
+                score.fit, score.route_score, score.confidence, _dump(score.components),
+            ),
+        )
+        got = self.latest_for_route(score.route_id)
+        if got is None:  # pragma: no cover
+            raise RepoError(f"score for {score.route_id} did not persist")
+        return got
+
+    def latest_for_route(self, route_id: str) -> Score | None:
+        row = self._one(
+            "SELECT * FROM score WHERE route_id = ? ORDER BY scored_at DESC, rowid DESC LIMIT 1",
+            (route_id,),
+        )
+        if not row:
+            return None
+        return Score(
+            score_id=row["score_id"],
+            route_id=row["route_id"],
+            scored_at=row["scored_at"],
+            config_hash=row["config_hash"],
+            fit=row["fit"],
+            route_score=row["route_score"],
+            confidence=row["confidence"],
+            components=json.loads(row["components"]),
+        )
+
+    def history(self, route_id: str) -> list[Score]:
+        rows = self._all(
+            "SELECT score_id FROM score WHERE route_id = ? ORDER BY scored_at", (route_id,)
+        )
+        out: list[Score] = []
+        for r in rows:
+            row = self._one("SELECT * FROM score WHERE score_id = ?", (r["score_id"],))
+            if row:
+                out.append(
+                    Score(
+                        score_id=row["score_id"],
+                        route_id=row["route_id"],
+                        scored_at=row["scored_at"],
+                        config_hash=row["config_hash"],
+                        fit=row["fit"],
+                        route_score=row["route_score"],
+                        confidence=row["confidence"],
+                        components=json.loads(row["components"]),
+                    )
+                )
+        return out
+
+    def count(self) -> int:
+        return self._one("SELECT COUNT(*) c FROM score")["c"]  # type: ignore[index]
+
+
+class TriggerRepo(_Repo):
+    def add(self, trig: Trigger) -> Trigger:
+        self._exec(
+            """
+            INSERT INTO trigger (
+                trigger_id, employer_id, kind, what, occurred_on, source_url, span_text,
+                capability_implication, detected_at, decayed_strength, decay_computed_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(trigger_id) DO UPDATE SET
+                decayed_strength = excluded.decayed_strength,
+                decay_computed_at = excluded.decay_computed_at
+            """,
+            (
+                trig.trigger_id, trig.employer_id, trig.kind, trig.what, trig.occurred_on,
+                trig.source_url, trig.span_text, trig.capability_implication,
+                trig.detected_at, trig.decayed_strength, trig.decay_computed_at,
+            ),
+        )
+        got = self.get(trig.trigger_id)
+        if got is None:  # pragma: no cover
+            raise RepoError(f"trigger {trig.trigger_id} did not persist")
+        return got
+
+    def get(self, trigger_id: str) -> Trigger | None:
+        row = self._one("SELECT * FROM trigger WHERE trigger_id = ?", (trigger_id,))
+        if not row:
+            return None
+        return Trigger(
+            trigger_id=row["trigger_id"],
+            employer_id=row["employer_id"],
+            kind=row["kind"],
+            what=row["what"],
+            occurred_on=row["occurred_on"],
+            source_url=row["source_url"],
+            span_text=row["span_text"],
+            detected_at=row["detected_at"],
+            capability_implication=row["capability_implication"],
+            decayed_strength=row["decayed_strength"],
+            decay_computed_at=row["decay_computed_at"],
+        )
+
+    def for_employer(self, employer_id: str) -> list[Trigger]:
+        rows = self._all(
+            "SELECT trigger_id FROM trigger WHERE employer_id = ? ORDER BY occurred_on DESC",
+            (employer_id,),
+        )
+        return [t for r in rows if (t := self.get(r["trigger_id"]))]
+
+    def strongest_for_employer(self, employer_id: str) -> float:
+        """Max decayed strength. A trigger below 1.0 drops its route to LIBRARY."""
+        row = self._one(
+            "SELECT MAX(COALESCE(decayed_strength, 0.0)) s FROM trigger WHERE employer_id = ?",
+            (employer_id,),
+        )
+        return float(row["s"] or 0.0) if row else 0.0
+
+    def set_decay(self, trigger_id: str, strength: float, computed_at: str) -> None:
+        self._exec(
+            "UPDATE trigger SET decayed_strength = ?, decay_computed_at = ?"
+            " WHERE trigger_id = ?",
+            (strength, computed_at, trigger_id),
+        )
+
+    def count(self) -> int:
+        return self._one("SELECT COUNT(*) c FROM trigger")["c"]  # type: ignore[index]
+
+
+class MarkRepo(_Repo):
+    """Founder-owned. Read freely; write only through :meth:`ingest`.
+
+    There is deliberately no ``update`` and no ``delete``. A mark is a record of
+    a decision the founder made; the predecessor destroyed his work repeatedly
+    by overwriting these, and he had to redo dispositions more than once.
+    """
+
+    def ingest(self, mark: FounderMark) -> FounderMark:
+        """Insert a mark. An existing (route_id, marked_at) is left untouched."""
+        self._exec(
+            "INSERT INTO founder_mark (mark_id, route_id, marked_at, verdict,"
+            " target_verdict, note_freetext, outcome, knows_someone)"
+            " VALUES (?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(route_id, marked_at) DO NOTHING",
+            (
+                mark.mark_id, mark.route_id, mark.marked_at, mark.verdict,
+                mark.target_verdict, mark.note_freetext, mark.outcome, mark.knows_someone,
+            ),
+        )
+        row = self._one(
+            "SELECT * FROM founder_mark WHERE route_id = ? AND marked_at = ?",
+            (mark.route_id, mark.marked_at),
+        )
+        if row is None:  # pragma: no cover
+            raise RepoError(f"mark for {mark.route_id} did not persist")
+        return self._row(row)
+
+    def for_route(self, route_id: str) -> list[FounderMark]:
+        rows = self._all(
+            "SELECT * FROM founder_mark WHERE route_id = ? ORDER BY marked_at", (route_id,)
+        )
+        return [self._row(r) for r in rows]
+
+    def all_marks(self) -> list[FounderMark]:
+        """The entire training set. Every learning mechanism starts here."""
+        return [self._row(r) for r in self._all("SELECT * FROM founder_mark ORDER BY marked_at")]
+
+    def count(self) -> int:
+        return self._one("SELECT COUNT(*) c FROM founder_mark")["c"]  # type: ignore[index]
+
+    @staticmethod
+    def _row(row: sqlite3.Row) -> FounderMark:
+        return FounderMark(
+            mark_id=row["mark_id"],
+            route_id=row["route_id"],
+            marked_at=row["marked_at"],
+            verdict=row["verdict"],
+            target_verdict=row["target_verdict"],
+            note_freetext=row["note_freetext"],
+            outcome=row["outcome"],
+            knows_someone=row["knows_someone"],
+        )
+
+
+class RejectionRepo(_Repo):
+    """Standing rejections, keyed by normalized name AND registrable domain.
+
+    Matching on both is the fix for the observed failure: twelve rows of a
+    permanently rejected organization survived in the predecessor because the
+    check was by name only and the organization reappeared under a variant.
+    """
+
+    def add(self, rej: Rejection) -> Rejection:
+        self._exec(
+            "INSERT INTO rejection (rejection_id, match_name, match_domain, family_scope,"
+            " scope, pattern_tag, reason, created_from_mark_id, created_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(rejection_id) DO UPDATE SET reason = excluded.reason",
+            (
+                rej.rejection_id, rej.match_name, rej.match_domain, rej.family_scope,
+                rej.scope, rej.pattern_tag, rej.reason, rej.created_from_mark_id,
+                rej.created_at,
+            ),
+        )
+        got = self.get(rej.rejection_id)
+        if got is None:  # pragma: no cover
+            raise RepoError(f"rejection {rej.rejection_id} did not persist")
+        return got
+
+    def get(self, rejection_id: str) -> Rejection | None:
+        row = self._one("SELECT * FROM rejection WHERE rejection_id = ?", (rejection_id,))
+        return self._row(row) if row else None
+
+    def matching(
+        self, *, name_normalized: str | None, domain: str | None, family: str
+    ) -> list[Rejection]:
+        """Every rule that would block this candidate.
+
+        A rule scoped to one family does not block another — rejecting a room
+        says nothing about a channel at the same organization.
+        """
+        rows = self._all(
+            "SELECT * FROM rejection WHERE (family_scope = 'ALL' OR family_scope = ?)"
+            " AND ((match_name IS NOT NULL AND match_name = ?)"
+            "   OR (match_domain IS NOT NULL AND match_domain = ?))",
+            (family, name_normalized or "", domain or ""),
+        )
+        return [self._row(r) for r in rows]
+
+    def blocks(self, *, name_normalized: str | None, domain: str | None, family: str) -> bool:
+        return bool(self.matching(name_normalized=name_normalized, domain=domain, family=family))
+
+    def count(self) -> int:
+        return self._one("SELECT COUNT(*) c FROM rejection")["c"]  # type: ignore[index]
+
+    @staticmethod
+    def _row(row: sqlite3.Row) -> Rejection:
+        return Rejection(
+            rejection_id=row["rejection_id"],
+            created_at=row["created_at"],
+            match_name=row["match_name"],
+            match_domain=row["match_domain"],
+            family_scope=row["family_scope"],
+            scope=row["scope"],
+            pattern_tag=row["pattern_tag"],
+            reason=row["reason"],
+            created_from_mark_id=row["created_from_mark_id"],
+        )
+
+
+# --------------------------------------------------------------------------
+
+
+class Store:
+    """All repositories over one connection, plus the unit of work.
+
+    Not a service layer — just the handle a worker holds so it does not have to
+    construct eight objects.
+    """
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self.conn = conn
+        self.organizations = OrganizationRepo(conn)
+        self.employers = EmployerRepo(conn)
+        self.people = PersonRepo(conn)
+        self.routes = RouteRepo(conn)
+        self.evidence = EvidenceRepo(conn)
+        self.scores = ScoreRepo(conn)
+        self.triggers = TriggerRepo(conn)
+        self.marks = MarkRepo(conn)
+        self.rejections = RejectionRepo(conn)
+
+    @contextmanager
+    def unit_of_work(self) -> Iterator[Store]:
+        """Multi-table writes commit together or not at all."""
+        with transaction(self.conn):
+            yield self

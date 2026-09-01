@@ -1,0 +1,9 @@
+# Normalise line endings in the repository. Working trees may differ by
+# platform; what git stores must not.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.pdf binary
+*.gz  binary
+*.db  binary
