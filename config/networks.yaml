@@ -142,8 +142,12 @@ networks:
   - id: ga_adjacent_chambers
     name: Chambers with named industry councils, GA and adjacent states
     directory_url: null
+    discovery_method: ams_host_patterns
     sectors: [cross]
     node_count_est: 200
     tier: B
     notes: >
-      Enumerable via AMS host patterns in hosts.yaml rather than by search.
+      No national directory worth using. Enumerated by the AMS host patterns in
+      hosts.yaml - GrowthZone/ChamberMaster and MemberClicks expose predictable
+      hosts and paths, which is what makes chambers enumerable rather than
+      guessable. W1 walks those patterns per state instead of searching.

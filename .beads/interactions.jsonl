@@ -1,0 +1,1 @@
+{"id":"int-8b750444","kind":"field_change","created_at":"2026-09-01T17:31:48.7833286Z","actor":"recesso","issue_id":"sof-v7o.1","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"make check passes: ruff clean, format clean, 14 tests green, backlog dry-run works without bd. CI workflow added."}}
