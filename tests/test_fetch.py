@@ -438,8 +438,29 @@ def test_a_changed_page_is_counted_as_a_change(store: Store, snapshots: Snapshot
 
     record = store.fetch_log.get(URL)
     assert (record.fetch_count, record.change_count) == (2, 1)
-    assert record.first_fetched_at <= record.last_fetched_at
     assert snapshots.stats().count == 2, "both versions are kept; snapshots are never replaced"
+
+
+def test_the_first_fetch_timestamp_never_moves(store: Store, snapshots: SnapshotStore) -> None:
+    """first_fetched_at is the anchor for how long a page has been known. If it
+    tracked the latest fetch, every page would look newly discovered and the
+    'known since' signal would be worthless.
+
+    Timestamps are passed explicitly: utcnow() has second resolution, so two
+    fetches in the same tick would make an overwrite invisible.
+    """
+    january = "2026-01-15T09:00:00+00:00"
+    june = "2026-06-30T17:30:00+00:00"
+
+    store.fetch_log.record(
+        URL, content_hash="a" * 64, status=200, provider="fake", fetched_at=january
+    )
+    store.fetch_log.record(URL, content_hash="b" * 64, status=200, provider="fake", fetched_at=june)
+
+    record = store.fetch_log.get(URL)
+    assert record.first_fetched_at == january, "the first fetch moved"
+    assert record.last_fetched_at == june
+    assert record.first_fetched_at != record.last_fetched_at
 
 
 def test_an_unchanged_refetch_is_not_a_change(store: Store, snapshots: SnapshotStore) -> None:
