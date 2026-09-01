@@ -1,7 +1,7 @@
 # CONTINUE HERE
 
-**Last updated:** 2026-09-01 · E0.S1–S5, E1.S1, E1.S2, E1.S4 done. 241 tests, 96% branch
-coverage, 41/41 mutations caught.
+**Last updated:** 2026-09-01 · E0.S1–S5, E1.S1, E1.S2, E1.S4, E5.S1 done. 298 tests, 96% branch
+coverage, 56/56 mutations caught.
 
 If you are a new session or a new engineer, read this file, then `CLAUDE.md`, then run `bd ready`.
 That is the whole orientation.
@@ -12,13 +12,13 @@ That is the whole orientation.
 
 | | |
 |---|---|
-| **Done** | E0.S1 tooling and CI · E0.S2 config · E0.S3 secrets and redaction · E0.S4 run harness · E0.S5 cost ledger · E1.S1 schema · E1.S2 repositories · E1.S4 dedupe keys |
-| **Next** | `bd ready` → **E5.S1** (extraction schemas), **E2.S1** (fetch provider), **E1.S3** (founder write guard), **E4.S1** (marker gate) |
+| **Done** | E0.S1 tooling and CI · E0.S2 config · E0.S3 secrets and redaction · E0.S4 run harness · E0.S5 cost ledger · E1.S1 schema · E1.S2 repositories · E1.S4 dedupe keys · E5.S1 extraction contract |
+| **Next** | `bd ready` → **E5.S2** (mechanism extractor — highest risk in the plan), **E2.S1** (fetch provider), **E1.S3** (founder write guard), **E4.S1** (marker gate) |
 | **Nothing is running** | No scheduled jobs, no data collected, no live database yet |
 
 ```bash
 make install
-make check      # lint + 241 tests, offline, ~10s
+make check      # lint + 298 tests, offline, ~12s
 make cov        # branch coverage, fails under 88%
 make audit      # breaks the code on purpose; every mutation must be caught
 bd ready
@@ -26,7 +26,7 @@ bd ready
 
 ## How this project judges its own tests
 
-`make audit` is not optional decoration. It applies 41 specific mutations — each one a real bug a
+`make audit` is not optional decoration. It applies 56 specific mutations — each one a real bug a
 competent engineer could introduce — and fails if the suite does not notice. **A passing suite
 proves nothing; a suite that catches deliberate sabotage proves something.** CI runs it on every
 push alongside a branch-coverage floor.
@@ -48,6 +48,9 @@ code moved out from under it — fix the mutation, do not delete it.
 - `src/finder/store/` — schema and migrations (19 STRICT tables), twelve repositories,
   deterministic ids, and the dedupe keys. All database access lives here; a CI test scans the
   working tree for raw SQL anywhere else.
+- `src/finder/extract/schemas.py` — the extraction contract: the `Field` wrapper (value, span,
+  source_url), the common schema, four family extensions, per-family `route_type` literals, and
+  `extract_with_retry`, which retries once with the specific violations and then quarantines.
 - `src/finder/context.py` — the run harness. `start_run` / `resume_run`, per-item `claim()`
   checkpoints, `item()` for failure isolation, write-through counters, `not_reached`, and the cost
   ledger. Every worker loop is built on this.
@@ -65,9 +68,11 @@ an empty package.
 
 ## The next three things, in order
 
-1. **E5.S1 → E5.S2** — extraction schemas, then the mechanism extractor. **E5.S2 is the
-   highest-risk story in the plan.** Every downstream number inherits its quality and no plumbing
-   fixes a bad extractor. Build it against the ten labelled pages first.
+1. **E5.S2 — the mechanism extractor. The highest-risk story in the plan.** Every downstream
+   number inherits its quality and no plumbing fixes a bad extractor. The contract it must satisfy
+   already exists in `src/finder/extract/schemas.py`; what is missing is the prompt, the snapshot
+   handling, and the check that every span it returns actually appears in the snapshot. Build it
+   against the three hand-verified routes below before anything else.
 2. **E2.S1** — the FetchProvider protocol and the Firecrawl adapter. First real network code, and
    the first place the run harness carries live work.
 3. **E1.S3** — the founder-owned write guard. The schema already separates the tables; this adds
@@ -107,6 +112,16 @@ Milestone M1 is the thinnest slice that produces a real ranked list:
   `Store`. The guard itself had a hole: it ran `git grep`, which sees only **tracked** files, so a
   brand-new module was invisible to it until commit. It now walks the working tree, and a second
   test runs the same scanner over a deliberately broken tree so it can be shown to fail.
+
+- **The span rule is enforced in the type, not in a downstream check.** A stated value with no
+  verbatim span cannot be constructed at all, and `not_stated` carrying a span is refused just as
+  firmly — a contradictory evidence trail is worse than a gap. Two mutations guard it.
+- **`known_to_art` has no slot in any extraction schema.** Founder-owned inputs are kept out of the
+  shape entirely, because a model given a field will fill it, and its guess would outrank the
+  truth. A test walks every generated schema at every depth to prove no slot exists.
+- **Dates must be ISO *and* real days.** `2026-02-31` passes a regex and fails a calendar, and a
+  deadline that looks comparable but is not is worse than a missing one. The calendar check runs
+  inside the retry loop, so an impossible date gets the same second chance as any other violation.
 
 ## Three routes already verified by hand
 
