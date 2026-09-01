@@ -35,6 +35,7 @@ from finder.harvest.w1_registry import (
     to_nodes,
 )
 from finder.store.db import open_db, utcnow
+from finder.store.models import Network
 from finder.store.repos import Store
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -302,6 +303,26 @@ def test_a_network_that_yielded_nothing_still_gets_a_row(store: Store) -> None:
     seeded = network(id="empty", directory_url=None, seed_members=[{"name": "X", "domain": None}])
     registrar(store).register(seeded)
     assert store.networks.get("empty").node_count_actual == 0
+
+
+def test_a_later_pass_that_did_not_count_keeps_the_count(store: Store) -> None:
+    """Something other than W1 touching the network row must not blank what W1
+    established. A count of None means "did not count", not "counted zero"."""
+    store.networks.upsert(
+        Network(
+            network_id="n",
+            name="Original",
+            tier="A",
+            node_count_actual=51,
+            last_refreshed="2026-01-01T00:00:00+00:00",
+        )
+    )
+    store.networks.upsert(Network(network_id="n", name="Renamed", tier="B"))
+
+    net = store.networks.get("n")
+    assert net.node_count_actual == 51, "the count was blanked by a pass that did not count"
+    assert net.last_refreshed == "2026-01-01T00:00:00+00:00"
+    assert (net.name, net.tier) == ("Renamed", "B"), "what WAS supplied still updates"
 
 
 def test_a_second_run_creates_nothing_new(store: Store) -> None:
