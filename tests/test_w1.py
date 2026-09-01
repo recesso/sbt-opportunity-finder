@@ -14,6 +14,7 @@ whole network silently disappears from the harvest.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -21,21 +22,25 @@ import yaml
 
 from finder.acquire.fetch import Fetcher
 from finder.acquire.providers.base import FetchError, Snapshot
+from finder.acquire.providers.search import SearchProvider, SearchResult
 from finder.acquire.snapshot import SnapshotStore, content_hash
 from finder.config import NetworkDef
 from finder.context import start_run
 from finder.harvest.w1_registry import (
+    DEFAULT_DISCOVERY_LIMIT,
     IMPLAUSIBLE_YIELD_RATIO,
     LinkNodeExtractor,
     NetworkRegistrar,
     Node,
     NodeExtractor,
+    discovery_queries,
     looks_like_a_node,
     seed_nodes,
     to_nodes,
 )
 from finder.store.db import open_db, utcnow
-from finder.store.models import Network
+from finder.store.ids import rejection_id
+from finder.store.models import Network, Rejection
 from finder.store.repos import Store
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -638,3 +643,217 @@ def test_the_fetcher_protocol_is_the_real_one(store: Store, tmp_path: Path) -> N
         SnapshotStore(tmp_path / "snapshots"),
     )
     assert NetworkRegistrar(store, real).register(network()).created == 4
+
+
+# --- semantic discovery (step 5) -------------------------------------------
+
+THESIS = """
+  An organization that holds direct relationships with many employers and can
+  reach them without an event.
+"""
+
+
+class FakeSearch:
+    """A search provider with no transport."""
+
+    name = "fake-search"
+
+    def __init__(self, *results: SearchResult, error: Exception | None = None) -> None:
+        self.results = list(results)
+        self.error = error
+        self.queries: list[tuple[str, int]] = []
+
+    def search(self, query, *, limit=25, include_domains=None):
+        self.queries.append((query, limit))
+        if self.error is not None:
+            raise self.error
+        return [replace(r, query=query) for r in self.results]
+
+
+def found(url: str, title: str) -> SearchResult:
+    return SearchResult(url=url, title=title, query="", provider="fake-search")
+
+
+def test_the_fake_search_matches_the_protocol() -> None:
+    assert isinstance(FakeSearch(), SearchProvider)
+
+
+def test_a_query_is_built_per_sector_carrying_the_thesis() -> None:
+    """The thesis is what makes this a search for a kind of organization rather
+    than a keyword hunt."""
+    queries = discovery_queries(THESIS, ["manufacturing", "supply_chain"])
+
+    assert len(queries) == 2
+    assert queries[0].startswith("manufacturing: ")
+    assert queries[1].startswith("supply chain: "), "underscores are not words"
+    assert "holds direct relationships with many employers" in queries[0]
+    assert "\n" not in queries[0], "the thesis is condensed to one line"
+
+
+def test_an_empty_thesis_is_refused() -> None:
+    with pytest.raises(ValueError, match="needs thesis text"):
+        discovery_queries("   ", ["manufacturing"])
+
+
+def test_a_blank_sector_produces_no_query() -> None:
+    assert discovery_queries(THESIS, ["manufacturing", "", "  "]) == discovery_queries(
+        THESIS, ["manufacturing"]
+    )
+
+
+def test_discovery_registers_organizations_no_directory_lists(store: Store) -> None:
+    search = FakeSearch(
+        found("https://myscma.com/", "South Carolina Manufacturers Alliance"),
+        found("https://gpsed.org/about", "GPS Education Partners"),
+    )
+
+    result = registrar(store).discover(THESIS, ["manufacturing"], search=search)
+
+    assert result.created == 2
+    assert result.found == 2
+    org = store.organizations.get_by_domain("myscma.com")
+    assert org.name == "South Carolina Manufacturers Alliance"
+    assert org.tier == "C", "an unaffiliated find is not a tier A network node"
+    assert org.discovered_from.startswith("search:manufacturing: ")
+
+
+def test_a_discovered_organization_belongs_to_no_network(store: Store) -> None:
+    """It carries no network_id, because it belongs to no network — which is
+    exactly why a directory could never have produced it."""
+    registrar(store).discover(
+        THESIS, ["manufacturing"], search=FakeSearch(found("https://myscma.com/", "SCMA"))
+    )
+    assert store.organizations.get_by_domain("myscma.com").network_id is None
+    assert store.networks.count() == 0
+
+
+def test_an_organization_already_registered_is_counted_not_rewritten(store: Store) -> None:
+    """A discovery pass that finds nothing new because everything was already
+    registered is a GOOD outcome, and must not look like a failed pass."""
+    reg = registrar(store)
+    reg.register(network())
+    before = store.organizations.get_by_domain("gamep.org")
+
+    result = reg.discover(
+        THESIS, ["manufacturing"], search=FakeSearch(found("https://gamep.org/x", "GaMEP again"))
+    )
+
+    assert (result.created, result.already_known, result.found) == (0, 1, 0)
+    after = store.organizations.get_by_domain("gamep.org")
+    assert (after.name, after.network_id, after.tier) == (before.name, "nist_mep", "A")
+
+
+def test_a_permanently_rejected_organization_stays_rejected(store: Store) -> None:
+    """Search liking an organization does not overturn the founder's decision."""
+    store.rejections.add(
+        Rejection(
+            rejection_id=rejection_id("", "myscma.com", "ALL"),
+            created_at=utcnow(),
+            match_name=None,
+            match_domain="myscma.com",
+            family_scope="ALL",
+            scope="organization",
+            reason="permanently rejected",
+        )
+    )
+
+    result = registrar(store).discover(
+        THESIS, ["manufacturing"], search=FakeSearch(found("https://myscma.com/", "SCMA"))
+    )
+
+    assert (result.created, result.rejected) == (0, 1)
+    assert store.organizations.get_by_domain("myscma.com") is None
+
+
+def test_the_same_domain_across_two_sectors_is_registered_once(store: Store) -> None:
+    search = FakeSearch(found("https://myscma.com/", "SCMA"))
+    result = registrar(store).discover(THESIS, ["manufacturing", "supply_chain"], search=search)
+
+    assert len(search.queries) == 2, "both sectors were searched"
+    assert result.created == 1
+
+
+def test_search_junk_is_not_registered(store: Store) -> None:
+    search = FakeSearch(
+        found("https://www.linkedin.com/company/x", "Some Association"),
+        found("https://myscma.com/", "Learn more"),
+        found("https://intranet/x", "Internal"),
+        found("https://myscma.com/real", "South Carolina Manufacturers Alliance"),
+    )
+    result = registrar(store).discover(THESIS, ["manufacturing"], search=search)
+
+    assert result.created == 1
+    assert store.organizations.get_by_domain("myscma.com") is not None
+
+
+def test_a_failed_query_is_reported_and_the_rest_continue(store: Store) -> None:
+    class OneBadSector(FakeSearch):
+        def search(self, query, *, limit=25, include_domains=None):
+            if query.startswith("supply chain"):
+                raise FetchError("429 rate limited")
+            return super().search(query, limit=limit, include_domains=include_domains)
+
+    search = OneBadSector(found("https://myscma.com/", "SCMA"))
+
+    with start_run(store, "weekly", run_id="r-1") as run:
+        result = registrar(store).discover(
+            THESIS, ["manufacturing", "supply_chain"], search=search, run=run
+        )
+
+    assert result.created == 1, "the working sector still produced its find"
+    not_reached = store.runs.get("r-1").not_reached
+    assert not_reached[0]["reason"] == "discovery_failed"
+    assert "supply chain" in not_reached[0]["detail"]
+
+
+def test_discovery_is_charged_and_counted(store: Store) -> None:
+    search = FakeSearch(found("https://myscma.com/", "SCMA"))
+
+    with start_run(store, "weekly", run_id="r-1") as run:
+        registrar(store).discover(THESIS, ["manufacturing", "health"], search=search, run=run)
+
+    assert store.costs.by_provider("r-1") == {"fake-search": 0.0}
+    assert store.runs.get("r-1").counters["orgs_mapped"] == 1
+
+
+def test_the_result_limit_reaches_the_provider(store: Store) -> None:
+    search = FakeSearch()
+    registrar(store).discover(THESIS, ["manufacturing"], search=search, limit=7)
+    assert search.queries == [(search.queries[0][0], 7)]
+
+
+def test_the_default_limit_is_a_ceiling_per_query_not_a_verdict() -> None:
+    assert DEFAULT_DISCOVERY_LIMIT > 0
+
+
+def test_discovery_without_a_run_works(store: Store) -> None:
+    result = registrar(store).discover(
+        THESIS, ["manufacturing"], search=FakeSearch(found("https://myscma.com/", "SCMA"))
+    )
+    assert result.created == 1
+
+
+def test_a_discovery_pass_that_finds_nothing_is_not_an_error(store: Store) -> None:
+    with start_run(store, "weekly", run_id="r-1") as run:
+        result = registrar(store).discover(THESIS, ["manufacturing"], search=FakeSearch(), run=run)
+
+    assert result.as_dict() == {
+        "queries": 1,
+        "found": 0,
+        "created": 0,
+        "already_known": 0,
+        "rejected": 0,
+    }
+    assert store.runs.get("r-1").not_reached == []
+
+
+def test_discovery_uses_the_real_thesis_text(store: Store) -> None:
+    """Against config/thesis.yaml, not a paraphrase of it."""
+    thesis = yaml.safe_load((ROOT / "config" / "thesis.yaml").read_text(encoding="utf-8"))
+    search = FakeSearch()
+
+    registrar(store).discover(thesis["thesis"]["CHANNEL"], ["fintech"], search=search)
+
+    query = search.queries[0][0]
+    assert query.startswith("fintech: ")
+    assert "reach them without an event" in query

@@ -964,6 +964,126 @@ MUTATIONS: list[Mutation] = [
         why="A later pass that did not count would blank the count an earlier one established.",
         tests=("tests/test_w1.py", "tests/test_repos.py"),
     ),
+    # --- search and semantic discovery -------------------------------------
+    Mutation(
+        name="search-result-loses-its-query",
+        path="src/finder/acquire/providers/search.py",
+        old="                    query=query,",
+        new='                    query="",',
+        why="A domain found by 'state manufacturers association' is a different "
+        "candidate from one found by 'workforce consultant'. Losing which query "
+        "surfaced it throws that away, exactly as losing matched_term would.",
+        tests=("tests/test_search.py", "tests/test_w1.py"),
+    ),
+    Mutation(
+        name="keyword-search-instead-of-neural",
+        path="src/finder/acquire/providers/search.py",
+        old='            "type": "neural",',
+        new='            "type": "keyword",',
+        why="The queries are descriptions of a kind of organization, not keyword bags. "
+        "Keyword search on a thesis paragraph returns the EMS conferences and the "
+        "woodworking expo all over again.",
+        tests=("tests/test_search.py",),
+    ),
+    Mutation(
+        name="result-count-unclamped",
+        path="src/finder/acquire/providers/search.py",
+        old='            "numResults": min(max(1, limit), MAX_RESULTS),',
+        new='            "numResults": limit,',
+        why="A zero or negative count is a silently empty pass; an enormous one is a "
+        "bill nobody asked for.",
+        tests=("tests/test_search.py",),
+    ),
+    Mutation(
+        name="empty-search-results-crash",
+        path="src/finder/acquire/providers/search.py",
+        old="        if not isinstance(raw, list):\n            return []",
+        new="        if False:\n            return []",
+        why="Search legitimately returns nothing for a narrow query. Losing the whole "
+        "discovery pass over that is a poor trade.",
+        tests=("tests/test_search.py",),
+    ),
+    Mutation(
+        name="malformed-result-row-is-fatal",
+        path="src/finder/acquire/providers/search.py",
+        old='            if not isinstance(item, dict) or not isinstance(item.get("url"), str):',
+        new="            if False:",
+        why="One bad row in a result set must not cost the other twenty-four.",
+        tests=("tests/test_search.py",),
+    ),
+    Mutation(
+        name="snippet-unbounded",
+        path="src/finder/acquire/providers/search.py",
+        old='snippet=str(item.get("text") or item.get("snippet") or "").strip()[:1000],',
+        new='snippet=str(item.get("text") or item.get("snippet") or "").strip(),',
+        why="Snippets ride into logs and prompts. An unbounded one is a whole page.",
+        tests=("tests/test_search.py",),
+    ),
+    Mutation(
+        name="discovery-query-drops-the-thesis",
+        path="src/finder/harvest/w1_registry.py",
+        old="    return [f\"{sector.replace('_', ' ')}: {condensed}\" for sector in sectors"
+        " if sector.strip()]",
+        new="    return [sector.replace('_', ' ') for sector in sectors if sector.strip()]",
+        why="The thesis is what makes this a search for a KIND of organization. Without "
+        "it, 'manufacturing' returns directories and press releases.",
+        tests=("tests/test_w1.py",),
+    ),
+    Mutation(
+        name="empty-thesis-accepted",
+        path="src/finder/harvest/w1_registry.py",
+        old="    if not condensed:",
+        new="    if False:",
+        why="An empty query returns the whole internet, ranked by nothing.",
+        tests=("tests/test_w1.py",),
+    ),
+    Mutation(
+        name="discovery-rewrites-known-organizations",
+        path="src/finder/harvest/w1_registry.py",
+        old="            if self.store.organizations.get_by_domain(domain) is not None:",
+        new="            if False:",
+        why="A search hit would overwrite a tier A network node's name, tier and "
+        "network with a search engine's title and tier C.",
+        tests=("tests/test_w1.py",),
+    ),
+    Mutation(
+        name="discovery-ignores-standing-rejections",
+        path="src/finder/harvest/w1_registry.py",
+        old="            if self.store.rejections.blocks(",
+        new="            if False and self.store.rejections.blocks(",
+        why="Search liking an organization does not overturn the founder's permanent "
+        "rejection of it. This is how the rejected ones kept coming back.",
+        tests=("tests/test_w1.py",),
+    ),
+    Mutation(
+        name="discovered-org-claims-a-network",
+        path="src/finder/harvest/w1_registry.py",
+        old='                    network_id=None,\n                    tier="C",',
+        new='                    network_id="nist_mep",\n                    tier="A",',
+        why="An organization found by search belongs to no network and has not earned "
+        "a network's tier. Claiming both makes a guess look like a directory entry.",
+        tests=("tests/test_w1.py",),
+    ),
+    Mutation(
+        name="one-failed-query-ends-discovery",
+        path="src/finder/harvest/w1_registry.py",
+        old='                self._not_reached(run, "discovery_failed", f"{query[:80]}: {exc}")\n'
+        "                continue",
+        new='                self._not_reached(run, "discovery_failed", f"{query[:80]}: {exc}")\n'
+        "                break",
+        why="A rate limit on one sector must not silently cost the other four.",
+        tests=("tests/test_w1.py",),
+    ),
+    Mutation(
+        name="duplicate-discovery-hits-registered-twice",
+        path="src/finder/harvest/w1_registry.py",
+        old="            if domain in seen:\n                continue\n"
+        "            seen.add(domain)",
+        new="            if False:\n                continue\n            seen.add(domain)",
+        why="The same organization surfacing under two sector queries would be written "
+        "twice and counted twice.",
+        tests=("tests/test_w1.py",),
+    ),
 ]
 
 

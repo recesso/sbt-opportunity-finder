@@ -18,14 +18,13 @@ deterministic: a directory page lists its nodes as links whose anchor text is
 the node's name, and reading those is exact, free and replayable. An LLM
 extractor can be dropped in behind the same Protocol when a directory needs one.
 
-**Not in this module, deliberately:**
+Networks only cover bodies that belong to something. :meth:`discover` is the
+other half: search for the shape of an organization the thesis describes, and
+keep what the registry has never heard of. Its results are candidates, not
+members — they carry no ``network_id``, because they belong to no network, and
+that is exactly why they had to be found this way.
 
-* *Semantic discovery* of organizations outside every network (step 5) needs a
-  search provider that does not exist yet. Nothing here pretends to do it.
-* *Graph expansion* from partner and member lists is E3.S8, which is a story of
-  its own.
-
-Both are named in ``CONTINUE_HERE.md`` rather than left to be discovered.
+*Graph expansion* from partner and member lists is E3.S8, a story of its own.
 """
 
 from __future__ import annotations
@@ -37,6 +36,7 @@ from typing import Protocol, runtime_checkable
 
 from finder.acquire.fetch import Fetcher
 from finder.acquire.providers.base import FetchError, Snapshot
+from finder.acquire.providers.search import SearchProvider, SearchResult
 from finder.config import NetworkDef
 from finder.context import RunContext
 from finder.store import ids
@@ -49,6 +49,10 @@ from finder.store.repos import Store
 # almost certainly been mis-parsed. Kept low deliberately: the estimates are
 # order-of-magnitude, so this fires on failure, not on inaccuracy.
 IMPLAUSIBLE_YIELD_RATIO = 0.25
+
+# Discovery is unbounded by nature — there is always another page. This is the
+# ceiling per query, not a judgement about how many opportunities exist.
+DEFAULT_DISCOVERY_LIMIT = 25
 
 # Anchor text that names no organization.
 _GENERIC_ANCHORS = frozenset(
@@ -166,6 +170,48 @@ class RegistrationResult:
             "skipped_no_domain": len(self.skipped_no_domain),
             "estimate": self.estimate,
         }
+
+
+@dataclass(slots=True)
+class DiscoveryResult:
+    """Organizations search found that the registry had never heard of.
+
+    ``already_known`` is reported, not hidden: a discovery pass that returns
+    nothing new because everything was already registered is a *good* outcome,
+    and it must not look like a pass that failed.
+    """
+
+    queries: list[str] = field(default_factory=list)
+    nodes: list[Node] = field(default_factory=list)
+    created: int = 0
+    already_known: int = 0
+    rejected: int = 0
+
+    @property
+    def found(self) -> int:
+        return len(self.nodes)
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "queries": len(self.queries),
+            "found": self.found,
+            "created": self.created,
+            "already_known": self.already_known,
+            "rejected": self.rejected,
+        }
+
+
+def discovery_queries(thesis: str, sectors: Sequence[str]) -> list[str]:
+    """One query per sector, each carrying the family thesis.
+
+    The thesis is what makes this a search for a *kind of organization* rather
+    than a keyword hunt. "manufacturing association" returns directories and
+    press releases; the thesis text returns bodies that hold employers.
+    """
+    condensed = " ".join(thesis.split())
+    if not condensed:
+        raise ValueError("discovery needs thesis text; an empty query returns noise")
+    return [f"{sector.replace('_', ' ')}: {condensed}" for sector in sectors if sector.strip()]
 
 
 @runtime_checkable
@@ -336,6 +382,89 @@ class NetworkRegistrar:
         if run is not None:
             run.log.info("network_registered", **result.as_dict())
         return result
+
+    def discover(
+        self,
+        thesis: str,
+        sectors: Sequence[str],
+        *,
+        search: SearchProvider,
+        limit: int = DEFAULT_DISCOVERY_LIMIT,
+        run: RunContext | None = None,
+    ) -> DiscoveryResult:
+        """Find organizations no network directory lists.
+
+        Results carry no ``network_id``: they belong to no network, which is
+        precisely why a directory could never have produced them. Standing
+        rejections are honoured here as everywhere — an organization the founder
+        has permanently rejected must not reappear because a search engine
+        liked it.
+        """
+        result = DiscoveryResult(queries=discovery_queries(thesis, sectors))
+        seen: set[str] = set()
+
+        for query in result.queries:
+            try:
+                hits = search.search(query, limit=limit)
+            except FetchError as exc:
+                self._not_reached(run, "discovery_failed", f"{query[:80]}: {exc}")
+                continue
+            if run is not None:
+                run.cost.record(search.name, "search")
+            self._collect(hits, result, seen, run)
+
+        if run is not None:
+            if result.created:
+                run.count("orgs_mapped", result.created)
+            run.log.info("discovery_complete", **result.as_dict())
+        return result
+
+    def _collect(
+        self,
+        hits: Iterable[SearchResult],
+        result: DiscoveryResult,
+        seen: set[str],
+        run: RunContext | None,
+    ) -> None:
+        for hit in hits:
+            domain = registrable_domain(hit.url)
+            name = " ".join((hit.title or "").split()).strip(_NAME_EDGE_CHARS)
+            if not looks_like_a_node(name, hit.url, parent_domain=""):
+                continue
+            if domain in seen:
+                continue
+            seen.add(domain)
+
+            if self.store.organizations.get_by_domain(domain) is not None:
+                result.already_known += 1
+                continue
+            if self.store.rejections.blocks(
+                name_normalized=normalize_org(name), domain=domain, family="CHANNEL"
+            ):
+                result.rejected += 1
+                continue
+
+            node = Node(
+                name=name,
+                domain=domain,
+                network_id="",
+                url=hit.url,
+                discovered_from=f"search:{hit.query[:120]}",
+            )
+            result.nodes.append(node)
+            self.store.organizations.upsert(
+                Organization(
+                    org_id=ids.org_id(domain),
+                    canonical_domain=domain,
+                    name=node.name,
+                    name_normalized=normalize_org(node.name),
+                    first_seen=utcnow(),
+                    network_id=None,
+                    tier="C",
+                    discovered_from=node.discovered_from,
+                )
+            )
+            result.created += 1
 
     def register_all(
         self,
