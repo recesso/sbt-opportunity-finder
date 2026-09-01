@@ -240,6 +240,91 @@ MUTATIONS: list[Mutation] = [
         new="    missing = []",
         why="A run starts, spends money, and dies halfway on a missing key.",
     ),
+    # --- run harness: checkpointing, isolation and honest reporting -------
+    Mutation(
+        name="failed-item-retried",
+        path="src/finder/context.py",
+        old='TERMINAL_STATES = frozenset({"done", "failed", "skipped"})',
+        new='TERMINAL_STATES = frozenset({"done"})',
+        why="A page that 404s is retried forever inside the same run, burning budget.",
+    ),
+    Mutation(
+        name="mid-flight-item-stranded",
+        path="src/finder/context.py",
+        old='TERMINAL_STATES = frozenset({"done", "failed", "skipped"})',
+        new='TERMINAL_STATES = frozenset({"done", "failed", "skipped", "running"})',
+        why="Treating 'running' as terminal strands whatever the crash interrupted: the "
+        "item the process died on is never retried and the loss is invisible.",
+    ),
+    Mutation(
+        name="checkpoint-not-consulted",
+        path="src/finder/context.py",
+        old='        if row is not None and row["status"] in TERMINAL_STATES:',
+        new="        if False:",
+        why="Ignoring the checkpoint makes a resumed run redo every completed item, "
+        "which is the cost blow-up checkpointing exists to prevent.",
+    ),
+    Mutation(
+        name="unclaimed-completion-silent",
+        path="src/finder/context.py",
+        old="        if cur.rowcount == 0:",
+        new="        if False:",
+        why="Bookkeeping that silently does nothing turns the run report into fiction.",
+    ),
+    Mutation(
+        name="failure-recorded-as-success",
+        path="src/finder/context.py",
+        old='            self.fail(stage, item_key, f"{type(exc).__name__}: {exc}")',
+        new="            self.complete(stage, item_key)",
+        why="An item that crashed but is marked done is never retried and never "
+        "reported: silent data loss dressed up as a clean run.",
+    ),
+    Mutation(
+        name="one-bad-page-kills-the-run",
+        path="src/finder/context.py",
+        old="        except Exception as exc:  # noqa: BLE001 - isolation is the whole point",
+        new="        except KeyboardInterrupt as exc:",
+        why="Without per-item isolation one malformed page ends a harvest of four hundred.",
+    ),
+    Mutation(
+        name="not-reached-dropped",
+        path="src/finder/context.py",
+        old="        self.not_reached.append(NotReached(reason, detail, count))",
+        new="        pass",
+        why="Dropping truncation lets silence read as completeness, which is how the "
+        "predecessor reported success on runs that produced nothing.",
+    ),
+    Mutation(
+        name="unknown-counter-ignored",
+        path="src/finder/context.py",
+        old="        if name not in COUNTERS:",
+        new="        if False:",
+        why="A typo'd counter that silently no-ops reports real work as zero.",
+    ),
+    Mutation(
+        name="cost-not-persisted",
+        path="src/finder/context.py",
+        old='            "INSERT INTO cost_event (cost_id, run_id, provider,'
+        ' operation, units, usd,"\n            " recorded_at)'
+        ' VALUES (?,?,?,?,?,?,?)",',
+        new='            "SELECT ?,?,?,?,?,?,?",',
+        why="Unpersisted spend makes cost-per-good-route uncomputable and hides a price spike.",
+    ),
+    Mutation(
+        name="aborted-run-reported-ok",
+        path="src/finder/context.py",
+        old='        ctx.finish("failed", f"{type(exc).__name__}: {exc}")',
+        new='        ctx.finish("ok")',
+        why="A run that died reporting 'ok' is the most dangerous lie the system can "
+        "tell, because nobody goes looking for the missing half.",
+    ),
+    Mutation(
+        name="error-text-untruncated",
+        path="src/finder/context.py",
+        old="error=error[:500])",
+        new="error=error)",
+        why="A two-megabyte HTML body in a log line is how log files become unreadable.",
+    ),
 ]
 
 
