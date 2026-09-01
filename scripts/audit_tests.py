@@ -761,8 +761,8 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         name="query-string-not-searched",
         path="src/finder/acquire/map.py",
-        old='        haystacks = (("path", _searchable(f"{parts.path} {parts.query}")),)',
-        new='        haystacks = (("path", _searchable(parts.path)),)',
+        old='    haystacks = (("path", _searchable(f"{parts.path} {parts.query}")),)',
+        new='    haystacks = (("path", _searchable(parts.path)),)',
         why="On an AMS host the query string carries the section, so committee and "
         "event pages stop matching entirely.",
         tests=("tests/test_map.py",),
