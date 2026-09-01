@@ -49,9 +49,12 @@ class FirecrawlFetch:
         max_attempts: int = 3,
         backoff_s: float = 2.0,
         sleep: Callable[[float], None] = time.sleep,
-        # Set from the current plan's price list. Left at zero the ledger still
-        # counts calls — units are always right — but reports no dollars, and
-        # `finder.context.CostLedger` will show 0.00 rather than a stale guess.
+        # Deliberately left at zero, and not an open item. Firecrawl's own
+        # billing page answers "what did I spend" better than a hardcoded price
+        # that goes stale. What billing CANNOT answer is attribution — which
+        # stage of which run burned the calls — and that comes from the unit
+        # counts, which are always exact. Set this only if you want dollars
+        # attributed per stage as well as calls.
         cost_per_call_usd: float = 0.0,
     ) -> None:
         if not api_key:
