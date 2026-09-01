@@ -1,0 +1,37 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# data — never committed; snapshots and the DB are local/object-storage state
+data/finder.db
+data/finder.db-*
+data/snapshots/
+data/backups/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# beads working state (the .beads db is committed; locks are not)
+.beads/*.lock
+.beads/embeddeddolt/
+
+# os / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
