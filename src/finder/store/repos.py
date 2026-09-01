@@ -114,10 +114,23 @@ class OrganizationRepo(_Repo):
                     excluded.discovered_from, organization.discovered_from)
             """,
             (
-                org.org_id, org.canonical_domain, org.name, org.name_normalized,
-                _dump(org.aliases), org.org_type, org.network_id, org.member_unit,
-                org.employer_reach_est, _dump(org.sectors), org.geo_city, org.geo_state,
-                org.geo_scope, org.tier, org.first_seen, org.last_mapped, org.discovered_from,
+                org.org_id,
+                org.canonical_domain,
+                org.name,
+                org.name_normalized,
+                _dump(org.aliases),
+                org.org_type,
+                org.network_id,
+                org.member_unit,
+                org.employer_reach_est,
+                _dump(org.sectors),
+                org.geo_city,
+                org.geo_state,
+                org.geo_scope,
+                org.tier,
+                org.first_seen,
+                org.last_mapped,
+                org.discovered_from,
             ),
         )
         got = self.get(org.org_id) or self.get_by_domain(org.canonical_domain)
@@ -134,9 +147,7 @@ class OrganizationRepo(_Repo):
         return self._row(row) if row else None
 
     def find_by_normalized_name(self, name_normalized: str) -> list[Organization]:
-        rows = self._all(
-            "SELECT * FROM organization WHERE name_normalized = ?", (name_normalized,)
-        )
+        rows = self._all("SELECT * FROM organization WHERE name_normalized = ?", (name_normalized,))
         return [self._row(r) for r in rows]
 
     def due_for_mapping(self, tier: str, before: str) -> list[Organization]:
@@ -202,9 +213,17 @@ class EmployerRepo(_Repo):
                     excluded.reached_via_route_id, employer.reached_via_route_id)
             """,
             (
-                emp.employer_id, emp.name, emp.name_normalized, emp.domain, emp.naics,
-                emp.site_city, emp.site_state, emp.employee_count, _dump(emp.sectors),
-                emp.reached_via_route_id, emp.first_seen,
+                emp.employer_id,
+                emp.name,
+                emp.name_normalized,
+                emp.domain,
+                emp.naics,
+                emp.site_city,
+                emp.site_state,
+                emp.employee_count,
+                _dump(emp.sectors),
+                emp.reached_via_route_id,
+                emp.first_seen,
             ),
         )
         got = self.get(emp.employer_id)
@@ -268,10 +287,20 @@ class PersonRepo(_Repo):
                     excluded.change_detected_at, person.change_detected_at)
             """,
             (
-                person.person_id, person.org_id, person.employer_id, person.name,
-                person.title, person.email, person.phone, person.role, person.controls,
-                person.source_url, person.verified_at, person.previous_title,
-                person.leverage_change, person.change_detected_at,
+                person.person_id,
+                person.org_id,
+                person.employer_id,
+                person.name,
+                person.title,
+                person.email,
+                person.phone,
+                person.role,
+                person.controls,
+                person.source_url,
+                person.verified_at,
+                person.previous_title,
+                person.leverage_change,
+                person.change_detected_at,
             ),
         )
         got = self.get(person.person_id)
@@ -332,11 +361,24 @@ class RouteRepo(_Repo):
                 last_verified = COALESCE(excluded.last_verified, route.last_verified)
             """,
             (
-                route.route_id, route.family, route.org_id, route.employer_id,
-                route.person_id, route.mechanism_name, route.route_type, route.route_url,
-                int(route.route_url_is_offdomain), route.evidence_url, route.eligibility,
-                route.owner_person_id, route.series_key, route.status, route.surface,
-                route.excluded_by_rule_id, _dump(route.unresolved), route.created_at,
+                route.route_id,
+                route.family,
+                route.org_id,
+                route.employer_id,
+                route.person_id,
+                route.mechanism_name,
+                route.route_type,
+                route.route_url,
+                int(route.route_url_is_offdomain),
+                route.evidence_url,
+                route.eligibility,
+                route.owner_person_id,
+                route.series_key,
+                route.status,
+                route.surface,
+                route.excluded_by_rule_id,
+                _dump(route.unresolved),
+                route.created_at,
                 route.last_verified,
             ),
         )
@@ -420,9 +462,19 @@ class EvidenceRepo(_Repo):
                 fetched_at = excluded.fetched_at
             """,
             (
-                ev.ev_id, ev.route_id, ev.org_id, ev.field_name, ev.value, ev.span_text,
-                ev.span_match, ev.source_url, ev.content_hash, ev.snapshot_uri,
-                ev.extractor, ev.prompt_version, ev.fetched_at,
+                ev.ev_id,
+                ev.route_id,
+                ev.org_id,
+                ev.field_name,
+                ev.value,
+                ev.span_text,
+                ev.span_match,
+                ev.source_url,
+                ev.content_hash,
+                ev.snapshot_uri,
+                ev.extractor,
+                ev.prompt_version,
+                ev.fetched_at,
             ),
         )
         got = self.get(ev.ev_id)
@@ -480,8 +532,14 @@ class ScoreRepo(_Repo):
             " route_score = excluded.route_score, confidence = excluded.confidence,"
             " components = excluded.components",
             (
-                score.score_id, score.route_id, score.scored_at, score.config_hash,
-                score.fit, score.route_score, score.confidence, _dump(score.components),
+                score.score_id,
+                score.route_id,
+                score.scored_at,
+                score.config_hash,
+                score.fit,
+                score.route_score,
+                score.confidence,
+                _dump(score.components),
             ),
         )
         got = self.latest_for_route(score.route_id)
@@ -546,9 +604,17 @@ class TriggerRepo(_Repo):
                 decay_computed_at = excluded.decay_computed_at
             """,
             (
-                trig.trigger_id, trig.employer_id, trig.kind, trig.what, trig.occurred_on,
-                trig.source_url, trig.span_text, trig.capability_implication,
-                trig.detected_at, trig.decayed_strength, trig.decay_computed_at,
+                trig.trigger_id,
+                trig.employer_id,
+                trig.kind,
+                trig.what,
+                trig.occurred_on,
+                trig.source_url,
+                trig.span_text,
+                trig.capability_implication,
+                trig.detected_at,
+                trig.decayed_strength,
+                trig.decay_computed_at,
             ),
         )
         got = self.get(trig.trigger_id)
@@ -591,8 +657,7 @@ class TriggerRepo(_Repo):
 
     def set_decay(self, trigger_id: str, strength: float, computed_at: str) -> None:
         self._exec(
-            "UPDATE trigger SET decayed_strength = ?, decay_computed_at = ?"
-            " WHERE trigger_id = ?",
+            "UPDATE trigger SET decayed_strength = ?, decay_computed_at = ? WHERE trigger_id = ?",
             (strength, computed_at, trigger_id),
         )
 
@@ -616,8 +681,14 @@ class MarkRepo(_Repo):
             " VALUES (?,?,?,?,?,?,?,?)"
             " ON CONFLICT(route_id, marked_at) DO NOTHING",
             (
-                mark.mark_id, mark.route_id, mark.marked_at, mark.verdict,
-                mark.target_verdict, mark.note_freetext, mark.outcome, mark.knows_someone,
+                mark.mark_id,
+                mark.route_id,
+                mark.marked_at,
+                mark.verdict,
+                mark.target_verdict,
+                mark.note_freetext,
+                mark.outcome,
+                mark.knows_someone,
             ),
         )
         row = self._one(
@@ -670,8 +741,14 @@ class RejectionRepo(_Repo):
             " VALUES (?,?,?,?,?,?,?,?,?)"
             " ON CONFLICT(rejection_id) DO UPDATE SET reason = excluded.reason",
             (
-                rej.rejection_id, rej.match_name, rej.match_domain, rej.family_scope,
-                rej.scope, rej.pattern_tag, rej.reason, rej.created_from_mark_id,
+                rej.rejection_id,
+                rej.match_name,
+                rej.match_domain,
+                rej.family_scope,
+                rej.scope,
+                rej.pattern_tag,
+                rej.reason,
+                rej.created_from_mark_id,
                 rej.created_at,
             ),
         )

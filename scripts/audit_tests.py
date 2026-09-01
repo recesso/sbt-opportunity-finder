@@ -177,6 +177,54 @@ MUTATIONS: list[Mutation] = [
         new="            if total != -1:",
         why="Weights that do not sum to 100 silently distort every FIT score.",
     ),
+    # --- dedupe keys ------------------------------------------------------
+    Mutation(
+        name="platform-host-ignored",
+        path="src/finder/store/keys.py",
+        old="    if domain in PLATFORM_HOSTS:",
+        new="    if False:",
+        why="Two unrelated organizations both cite glueup.com in the real data. "
+        "Keying identity on a rented platform host merges strangers.",
+    ),
+    Mutation(
+        name="chapter-qualifier-disabled",
+        path="src/finder/store/keys.py",
+        old='_CHAPTER_MARKERS = {"post", "chapter",',
+        new='_CHAPTER_MARKERS = set() or {"nothing",',
+        why="Nine SAME posts share same.org and twelve HFMA chapters share hfma.org. "
+        "Without the place qualifier they collapse into one organization.",
+    ),
+    Mutation(
+        name="council-treated-as-chapter-marker",
+        path="src/finder/store/keys.py",
+        old='"roundtable", "section", "branch", "affiliate"}',
+        new='"roundtable", "section", "branch", "affiliate", "council"}',
+        why="Splits 'SC Manufacturers Council' from 'SC Manufacturers & Commerce' — "
+        "the exact bug that let a permanently rejected organization survive.",
+    ),
+    Mutation(
+        name="entity-marker-disabled",
+        path="src/finder/store/keys.py",
+        old='_DISTINCT_ENTITY_MARKERS = {"foundation", "fund", "pac", "institute", "trust"}',
+        new="_DISTINCT_ENTITY_MARKERS = set()",
+        why="A chamber and its foundation are separate legal entities sharing one "
+        "domain; without this marker they merge.",
+    ),
+    Mutation(
+        name="generic-pages-not-collapsed",
+        path="src/finder/store/keys.py",
+        old="    if is_generic_program_page(mechanism):",
+        new="    if False:",
+        why="A 'Forums' page and an 'Events' page at one body become two routes.",
+    ),
+    Mutation(
+        name="years-split-recurring-series",
+        path="src/finder/store/keys.py",
+        old='    without_years = _ORDINALS.sub(" ", _YEARS.sub(" ", text or ""))',
+        new='    without_years = text or ""',
+        why="'2nd Annual Summit' and '3rd Annual Summit' become different series "
+        "instead of one recurring mechanism with two occurrences.",
+    ),
     # --- secrets ----------------------------------------------------------
     Mutation(
         name="redaction-disabled",

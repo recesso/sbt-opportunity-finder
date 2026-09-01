@@ -1,7 +1,7 @@
 # CONTINUE HERE
 
-**Last updated:** 2026-09-01 · E0.S1–S3, E1.S1, E1.S2 done. 129 tests, 95% branch coverage,
-18/18 mutations caught.
+**Last updated:** 2026-09-01 · E0.S1–S3, E1.S1, E1.S2, E1.S4 done. 193 tests, 95% branch
+coverage, 24/24 mutations caught.
 
 If you are a new session or a new engineer, read this file, then `CLAUDE.md`, then run `bd ready`.
 That is the whole orientation.
@@ -12,13 +12,13 @@ That is the whole orientation.
 
 | | |
 |---|---|
-| **Done** | E0.S1 tooling and CI · E0.S2 config · E0.S3 secrets and redaction · E1.S1 schema · E1.S2 repositories |
-| **Next** | `bd ready` → **E1.S3** (founder write guard), **E1.S4** (dedupe keys), **E0.S4** (run harness), **E0.S5** (cost ledger) |
+| **Done** | E0.S1 tooling and CI · E0.S2 config · E0.S3 secrets and redaction · E1.S1 schema · E1.S2 repositories · E1.S4 dedupe keys |
+| **Next** | `bd ready` → **E1.S3** (founder write guard), **E0.S4** (run harness), **E0.S5** (cost ledger), **E4.S1** (marker gate), **E5.S1** (extraction schemas) |
 | **Nothing is running** | No scheduled jobs, no data collected, no live database yet |
 
 ```bash
 make install
-make check      # lint + 129 tests, offline, ~3s
+make check      # lint + 193 tests, offline, ~5s
 make cov        # branch coverage, fails under 88%
 make audit      # breaks the code on purpose; every mutation must be caught
 bd ready
@@ -26,7 +26,7 @@ bd ready
 
 ## How this project judges its own tests
 
-`make audit` is not optional decoration. It applies 18 specific mutations — each one a real bug a
+`make audit` is not optional decoration. It applies 24 specific mutations — each one a real bug a
 competent engineer could introduce — and fails if the suite does not notice. **A passing suite
 proves nothing; a suite that catches deliberate sabotage proves something.** CI runs it on every
 push alongside a branch-coverage floor.
@@ -45,22 +45,30 @@ code moved out from under it — fix the mutation, do not delete it.
 - `src/finder/secrets.py` + `src/finder/logging.py` — env-only secrets, `require()` reporting all
   missing keys at once, and a structlog processor that makes it impossible for a key to appear in
   a log line.
+- `src/finder/store/` — schema and migrations (19 STRICT tables), nine repositories, deterministic
+  ids, and the dedupe keys. All database access lives here; a CI test greps for raw SQL anywhere
+  else.
 - `plan/backlog.yaml` — 14 epics, 66 stories, decomposed to atomic steps. Source of truth.
 - `scripts/load_backlog.py` — idempotent loader into Beads.
+- `scripts/audit_tests.py` — the mutation audit.
+- `scripts/build_dedupe_fixture.py` — regenerates the 500-pair labelled set from the predecessor
+  export. The hard cases beside it are hand-curated and are NOT regenerated.
 
 ## What does not exist yet
 
-No database, no schema, no providers, no workers. `src/finder/` beyond the three modules above is
-empty packages.
+No providers, no workers, no run harness, no live database. Everything under `acquire/`,
+`harvest/`, `precision/`, `extract/`, `resolve/`, `score/`, `ask/`, `output/`, `learn/` and
+`eval/` is still an empty package.
 
 ## The next three things, in order
 
-1. **E1.S1** — SQLite schema and migrations. Unblocks E0.S4 (run harness) and all of E1.
-2. **E1.S4** — normalisation and dedupe keys, with the 500-row labelled set. In the predecessor
-   database 880 of the 976 keyed rows were duplicates because the keys were never checked.
-3. **E5.S2** — the mechanism extractor. **Highest-risk story in the plan.** Every downstream
-   number inherits its quality and no plumbing fixes a bad extractor. Build it against the ten
-   labelled pages before building anything on top of it.
+1. **E0.S4** — RunContext and checkpointing. The `stage_run` table exists; the protocol on top of
+   it does not, and every worker loop needs it.
+2. **E5.S1 → E5.S2** — extraction schemas, then the mechanism extractor. **E5.S2 is the
+   highest-risk story in the plan.** Every downstream number inherits its quality and no plumbing
+   fixes a bad extractor. Build it against the ten labelled pages first.
+3. **E1.S3** — the founder-owned write guard. The schema already separates the tables; this adds
+   the runtime assertion and the audit trail.
 
 Milestone M1 is the thinnest slice that produces a real ranked list:
 `E0 → E1 → E2 → E3.S2 → E5.S2 → E6.S1 → E7 → E9.S1`.
@@ -75,6 +83,16 @@ Milestone M1 is the thinnest slice that produces a real ranked list:
   multi-line output buried the useful part.
 - **A test forbids geography from ever becoming a scored dimension** (`test_config.py`). The rule
   is an ADR; the test is the guard rail.
+- **Organization identity is NOT the domain alone.** `same.org` hosts nine SAME posts, `cscmp.org`
+  hosts Atlanta and Charlotte roundtables, `hfma.org` twelve state chapters — all distinct
+  organizations. And `glueup.com` is an event platform shared by unrelated bodies. Identity is
+  `(own domain, chapter place, distinct-entity marker)`. This corrected the `org_id(domain)` design
+  from E1.S2; see `src/finder/store/keys.py`.
+- **`same_org` and `same_route` are different questions.** A named council belongs to its parent
+  organization and separates at the route level, not the organization level.
+- **The 500-pair dedupe score is 1.0/1.0 and that is not impressive.** Those pairs are easy by
+  construction. The real signal is `tests/fixtures/dedupe_hard_cases.json` — 26 hand-curated pairs,
+  four of which failed on the first run and drove real design changes.
 
 ## Three routes already verified by hand
 

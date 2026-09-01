@@ -258,7 +258,7 @@ epics:
       - "series_key = sha1(normalize_org(org) + '|' + normalize_mechanism(mechanism))."
       - "occurrence_key = series_key + '|' + (iso_date or 'recurring')."
       - "Fuzzy fallback: rapidfuzz token_set_ratio >= 92 on normalised org AND the same registrable domain (use publicsuffix2)."
-      - "Build tests/fixtures/dedupe_labelled.csv: 500 rows sampled from the predecessor All Opportunities export, hand-labelled for true duplicates."
+      - "DONE 2026-09-01, method revised: 500 pairs in tests/fixtures/dedupe_labelled.json are AUTO-labelled from signals the code under test does not use (identical org string + identical URL = duplicate; different domain + different leading word = distinct). Hand-labelling 500 was not achievable honestly, and auto-labelling the HARD cases proved wrong - a first attempt called JAX Chamber Health Council and JAX Chamber IT Council the same organization. The hard cases are therefore hand-curated in tests/fixtures/dedupe_hard_cases.json, 20 organization pairs plus 6 route pairs, each read individually with its reasoning recorded. Report both: the 500-pair score is near-perfect BY CONSTRUCTION and proves only that obvious cases work."
       - "Measure precision and recall against the labelled set; tune the threshold; write the tuned value into config, not code."
       - "Encode the known asymmetry: named Council/Committee/Chapter/Society/Post/Board sub-bodies keep their own record; generic 'Forum' and 'Speaker Bank' pages fold into the parent. Test both directions."
     acceptance: >

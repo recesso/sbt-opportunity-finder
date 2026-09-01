@@ -1,0 +1,212 @@
+{
+ "_levels": "same_org asks whether two rows name the SAME ORGANIZATION. A named sub-body (council, society, committee) belongs to its parent organization and separates at the ROUTE level instead \u2014 see sub_body_routes. Conflating the two levels was the first mistake made while writing this fixture.",
+ "_method": "HAND-CURATED. Every pair below was read individually against the predecessor export (GTM-Event-Tracker/tracker-export/All Opportunities.csv). These are not auto-generated: an automated labeller cannot tell a name variant from a sibling sub-body, which is exactly the judgement being tested. The easy classes in dedupe_labelled.json ARE auto-generated from independent signals; this file is the part that needs a person.",
+ "_reviewed": "2026-09-01",
+ "_rule": "same_org=true means one organization under a name variant. same_org=false means genuinely distinct bodies that a naive key would merge.",
+ "pairs": [
+  {
+   "a_org": "Georgia Manufacturing Alliance (GMA)",
+   "a_url": "https://www.georgiamanufacturingalliance.com/events",
+   "b_org": "Georgia Manufacturing Alliance",
+   "b_url": "https://www.georgiamanufacturingalliance.com/",
+   "same_org": true,
+   "why": "Acronym in parentheses is the only difference."
+  },
+  {
+   "a_org": "Georgia Manufacturing Extension Partnership (GaMEP) at Georgia Tech",
+   "a_url": "https://gamep.org/events",
+   "b_org": "GaMEP at Georgia Tech",
+   "b_url": "https://gamep.org/",
+   "same_org": true,
+   "why": "Expanded name versus acronym, same body."
+  },
+  {
+   "a_org": "Greater Rome Existing Industries Association (GREIA)",
+   "a_url": "https://www.romega.com/greia",
+   "b_org": "GREIA (Greater Rome Existing Industries Association)",
+   "b_url": "https://www.romega.com/",
+   "same_org": true,
+   "why": "Same name, reordered."
+  },
+  {
+   "a_org": "Technology Association of Georgia (TAG)",
+   "a_url": "https://www.tagonline.org/",
+   "b_org": "Technology Association of Georgia",
+   "b_url": "https://members.tagonline.org/calendar",
+   "same_org": true,
+   "why": "Same body; members.* is a hosting subdomain, not a different org."
+  },
+  {
+   "a_org": "South Carolina Manufacturers & Commerce",
+   "a_url": "https://www.myscmc.org/events",
+   "b_org": "South Carolina Manufacturers Council",
+   "b_url": "https://www.myscmc.org/councils",
+   "same_org": true,
+   "why": "THE CASE THAT MATTERS. Same domain, same place, name variant. The predecessor treated these as different and twelve rows of a permanently rejected organization survived."
+  },
+  {
+   "a_org": "Cobb Chamber / SelectCobb",
+   "a_url": "https://cobbchamber.org/get-involved",
+   "b_org": "Cobb Chamber",
+   "b_url": "https://cobbchamber.org/",
+   "same_org": true,
+   "why": "SelectCobb is a programme label appended to the chamber's own name."
+  },
+  {
+   "a_org": "Savannah Area Chamber of Commerce",
+   "a_url": "https://savannahchamber.com/about-the-chamber/councils/industry-council/",
+   "b_org": "Savannah Area Chamber of Commerce",
+   "b_url": "https://savannahchamber.com/events/",
+   "same_org": true,
+   "why": "Identical organization, two pages."
+  },
+  {
+   "a_org": "SAME Charleston Post (Society of American Military Engineers)",
+   "a_url": "https://www.same.org/charleston",
+   "b_org": "SAME Atlanta Post (Society of American Military Engineers)",
+   "b_url": "https://www.same.org/atlanta",
+   "same_org": false,
+   "why": "Two chapters of one national body. Nine SAME posts share same.org; a domain-only key merges all of them, and the founder rejected Atlanta specifically."
+  },
+  {
+   "a_org": "SAME Jacksonville Post (Society of American Military Engineers)",
+   "a_url": "https://www.same.org/jacksonville",
+   "b_org": "SAME Fort Worth Post (Society of American Military Engineers)",
+   "b_url": "https://www.same.org/fortworth",
+   "same_org": false,
+   "why": "Distinct chapters, different cities."
+  },
+  {
+   "a_org": "CSCMP Atlanta Roundtable",
+   "a_url": "https://cscmp.org/CSCMP/Connect/Local-Roundtables/Atlanta.aspx",
+   "b_org": "CSCMP Charlotte Roundtable",
+   "b_url": "https://cscmp.org/CSCMP/Connect/Local-Roundtables/Charlotte.aspx",
+   "same_org": false,
+   "why": "Separate roundtables with separate boards and calendars."
+  },
+  {
+   "a_org": "HFMA Alabama Chapter",
+   "a_url": "https://www.hfma.org/chapters/alabama",
+   "b_org": "HFMA Florida Chapter",
+   "b_url": "https://www.hfma.org/chapters/florida",
+   "same_org": false,
+   "why": "State chapters. Twelve of them share hfma.org."
+  },
+  {
+   "a_org": "Georgia HFMA",
+   "a_url": "https://www.hfma.org/chapters/georgia",
+   "b_org": "HFMA Lone Star Chapter",
+   "b_url": "https://www.hfma.org/chapters/lonestar",
+   "same_org": false,
+   "why": "State chapters; the place appears before the body name in one and after in the other."
+  },
+  {
+   "a_org": "JAX Chamber Health Council",
+   "a_url": "https://www.jaxchamber.com/councils/health",
+   "b_org": "JAX Chamber IT Council",
+   "b_url": "https://www.jaxchamber.com/councils/it",
+   "same_org": true,
+   "why": "Named sub-bodies of ONE chamber. The organization is the same; the councils are different MECHANISMS and stay separate routes via series_key. Asserted at route level in sub_body_routes below."
+  },
+  {
+   "a_org": "JAX Chamber Transportation & Logistics Council",
+   "a_url": "https://www.jaxchamber.com/councils/transportation",
+   "b_org": "JAX Chamber",
+   "b_url": "https://www.jaxchamber.com/",
+   "same_org": true,
+   "why": "Council and parent chamber are one organization; the council is a distinct mechanism. Route-level separation asserted below."
+  },
+  {
+   "a_org": "Georgia Chamber of Commerce",
+   "a_url": "https://www.gachamber.com/calendar-of-events/",
+   "b_org": "Georgia Chamber of Commerce \u2014 Hub Chamber Council",
+   "b_url": "https://www.gachamber.com/hub-chamber-council/",
+   "same_org": true,
+   "why": "Hub Chamber Council is a named council INSIDE the Georgia Chamber. One organization, two mechanisms. Route-level separation asserted below."
+  },
+  {
+   "a_org": "Technology Association of Georgia",
+   "a_url": "https://www.tagonline.org/",
+   "b_org": "TAG Supply Chain, Logistics & Manufacturing Society",
+   "b_url": "https://www.tagonline.org/societies/supply-chain/",
+   "same_org": true,
+   "why": "A TAG society is a distinct room inside TAG, not a distinct organization. Eleven societies share tagonline.org; they separate at route level, not org level."
+  },
+  {
+   "a_org": "Maritime Association of South Carolina",
+   "a_url": "https://maritimesc.glueup.com/events/",
+   "b_org": "South Carolina Manufacturers Council",
+   "b_url": "https://scmc.glueup.com/events/",
+   "same_org": false,
+   "why": "THE PLATFORM CASE. Both cite glueup.com, an event platform. Two unrelated organizations. A domain-only key merges strangers."
+  },
+  {
+   "a_org": "Georgia Chamber of Commerce",
+   "a_url": "https://www.gachamber.com/",
+   "b_org": "Georgia Chamber of Commerce Foundation",
+   "b_url": "https://www.gachamber.com/foundation/",
+   "same_org": false,
+   "why": "Separate legal entity with its own programming."
+  },
+  {
+   "a_org": "Richmond Hill-Bryan County Chamber of Commerce",
+   "a_url": "https://www.rhbcchamber.org/events",
+   "b_org": "Bryan County Chamber of Commerce",
+   "b_url": "https://www.rhbcchamber.org/",
+   "same_org": true,
+   "why": "Same chamber; the shorter form omits the city prefix. Judgement call, recorded as such."
+  },
+  {
+   "a_org": "ACAMS Houston Chapter",
+   "a_url": "https://www.acams.org/chapters/houston",
+   "b_org": "ACAMS North Texas Chapter",
+   "b_url": "https://www.acams.org/chapters/north-texas",
+   "same_org": false,
+   "why": "Named in the spec as the canonical example: three chapters, not three name variants."
+  }
+ ],
+ "sub_body_routes": [
+  {
+   "mech_a": "Health Council",
+   "mech_b": "IT Council",
+   "org_key": "jaxchamber.com|jacksonville",
+   "same_route": false,
+   "why": "Two councils, two rooms, two audiences. Distinct records per the named-sub-body rule."
+  },
+  {
+   "mech_a": "Transportation & Logistics Council",
+   "mech_b": "Health Council",
+   "org_key": "jaxchamber.com|jacksonville",
+   "same_route": false,
+   "why": "The founder marked the Transportation council PURSUE; Health is a different room."
+  },
+  {
+   "mech_a": "Hub Chamber Council",
+   "mech_b": "Regional Roundtables",
+   "org_key": "gachamber.com|georgia",
+   "same_route": false,
+   "why": "Named council versus a separate event series at one chamber."
+  },
+  {
+   "mech_a": "Supply Chain, Logistics & Manufacturing Society",
+   "mech_b": "Fintech Society",
+   "org_key": "tagonline.org|georgia",
+   "same_route": false,
+   "why": "Two TAG societies with separate boards."
+  },
+  {
+   "mech_a": "Forums",
+   "mech_b": "Speaker Bank",
+   "org_key": "x.org",
+   "same_route": true,
+   "why": "Generic programme pages fold into the parent; they are not two routes."
+  },
+  {
+   "mech_a": "2nd Annual Manufacturing Summit",
+   "mech_b": "3rd Annual Manufacturing Summit",
+   "org_key": "gamep.org|georgia",
+   "same_route": true,
+   "why": "One recurring series. The occurrence key carries the date that separates instances."
+  }
+ ]
+}
