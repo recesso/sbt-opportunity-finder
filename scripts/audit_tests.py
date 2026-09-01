@@ -46,6 +46,10 @@ class Mutation:
     old: str
     new: str
     why: str
+    # Test files that should notice this mutation. Only a speed hint: a
+    # mutation that survives them is re-run against the whole suite before it
+    # is reported, so a wrong guess costs time and never correctness.
+    tests: tuple[str, ...] = ()
 
 
 MUTATIONS: list[Mutation] = [
@@ -56,6 +60,7 @@ MUTATIONS: list[Mutation] = [
         old="_HASH_LEN = 12",
         new="_HASH_LEN = 1",
         why="Truncated ids collide, so unrelated routes silently become one record.",
+        tests=("tests/test_repos.py",),
     ),
     Mutation(
         name="ids-nondeterministic",
@@ -63,6 +68,7 @@ MUTATIONS: list[Mutation] = [
         old='joined = "\\x1f".join(p.strip().lower() for p in parts)',
         new="import random; joined = str(random.random())",
         why="Non-deterministic ids break replay idempotency: every re-run duplicates.",
+        tests=("tests/test_repos.py",),
     ),
     Mutation(
         name="empty-key-accepted",
@@ -70,6 +76,7 @@ MUTATIONS: list[Mutation] = [
         old='        raise ValueError("series_key is required to derive a route_id")',
         new="        pass",
         why="An empty natural key produces a shared id that swallows unrelated routes.",
+        tests=("tests/test_repos.py",),
     ),
     # --- upsert semantics -------------------------------------------------
     Mutation(
@@ -79,6 +86,7 @@ MUTATIONS: list[Mutation] = [
         new="                first_seen = excluded.first_seen,\n"
         "                geo_scope = COALESCE(excluded.geo_scope, organization.geo_scope),",
         why="Overwriting first_seen loses when an organization was discovered.",
+        tests=("tests/test_repos.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="null-erases-known-value",
@@ -86,6 +94,7 @@ MUTATIONS: list[Mutation] = [
         old="                org_type = COALESCE(excluded.org_type, organization.org_type),",
         new="                org_type = excluded.org_type,",
         why="A thinner later extraction blanks out what an earlier one established.",
+        tests=("tests/test_repos.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="route-url-erased",
@@ -93,6 +102,7 @@ MUTATIONS: list[Mutation] = [
         old="                route_url = COALESCE(excluded.route_url, route.route_url),",
         new="                route_url = excluded.route_url,",
         why="A re-extraction that missed the form erases the only way in.",
+        tests=("tests/test_repos.py", "tests/test_fetch.py"),
     ),
     # --- founder-owned data ----------------------------------------------
     Mutation(
@@ -103,6 +113,7 @@ MUTATIONS: list[Mutation] = [
         " note_freetext = excluded.note_freetext",
         why="The predecessor destroyed the founder's decisions exactly this way; "
         "he had to redo dispositions more than once.",
+        tests=("tests/test_repos.py", "tests/test_fetch.py"),
     ),
     # --- standing rejections ---------------------------------------------
     Mutation(
@@ -111,6 +122,7 @@ MUTATIONS: list[Mutation] = [
         old="(family_scope = 'ALL' OR family_scope = ?)",
         new="(family_scope = 'ALL' OR family_scope <> ?)",
         why="Rejecting a room would also block the channel at the same organization.",
+        tests=("tests/test_repos.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="rejection-name-only",
@@ -119,6 +131,7 @@ MUTATIONS: list[Mutation] = [
         new="            \"   OR (match_domain IS NOT NULL AND match_domain = ''))\",",
         why="Name-only matching is why twelve rows of a permanently rejected "
         "organization survived in the predecessor under a variant name.",
+        tests=("tests/test_repos.py", "tests/test_fetch.py"),
     ),
     # --- evidence ---------------------------------------------------------
     Mutation(
@@ -128,6 +141,7 @@ MUTATIONS: list[Mutation] = [
         new="            \" AND (span_text IS NOT NULL AND span_match <> 'absent')\",",
         why="The unsupported-field audit would report the opposite set, hiding "
         "exactly the fabricated fields it exists to surface.",
+        tests=("tests/test_repos.py", "tests/test_fetch.py"),
     ),
     # --- triggers ---------------------------------------------------------
     Mutation(
@@ -138,6 +152,7 @@ MUTATIONS: list[Mutation] = [
         new='            "SELECT MIN(COALESCE(decayed_strength, 0.0)) s FROM trigger'
         ' WHERE employer_id = ?",',
         why="Taking the weakest trigger buries an employer with a live, strong one.",
+        tests=("tests/test_repos.py", "tests/test_fetch.py"),
     ),
     # --- transactions -----------------------------------------------------
     Mutation(
@@ -146,6 +161,7 @@ MUTATIONS: list[Mutation] = [
         old='        conn.execute("ROLLBACK")',
         new='        conn.execute("COMMIT")',
         why="A failed multi-table write leaves half a record behind.",
+        tests=("tests/test_migrations.py", "tests/test_repos.py"),
     ),
     Mutation(
         name="foreign-keys-off",
@@ -153,6 +169,7 @@ MUTATIONS: list[Mutation] = [
         old='    conn.execute("PRAGMA foreign_keys = ON")',
         new='    conn.execute("PRAGMA foreign_keys = OFF")',
         why="SQLite disables FKs by default; orphan rows accumulate silently.",
+        tests=("tests/test_migrations.py", "tests/test_repos.py"),
     ),
     Mutation(
         name="migrations-not-idempotent",
@@ -160,6 +177,7 @@ MUTATIONS: list[Mutation] = [
         old="        if version in already:\n            continue",
         new="        if False:\n            continue",
         why="Re-running migrations would fail or duplicate schema objects.",
+        tests=("tests/test_migrations.py", "tests/test_repos.py"),
     ),
     # --- config guard rails ----------------------------------------------
     Mutation(
@@ -169,6 +187,7 @@ MUTATIONS: list[Mutation] = [
         new="    set()",
         why="Geography could quietly become a scored dimension again, which is "
         "the exact ADR this project reversed.",
+        tests=("tests/test_config.py",),
     ),
     Mutation(
         name="weights-need-not-sum",
@@ -176,6 +195,7 @@ MUTATIONS: list[Mutation] = [
         old="            if total != 100:",
         new="            if total != -1:",
         why="Weights that do not sum to 100 silently distort every FIT score.",
+        tests=("tests/test_config.py",),
     ),
     # --- dedupe keys ------------------------------------------------------
     Mutation(
@@ -185,6 +205,7 @@ MUTATIONS: list[Mutation] = [
         new="    if False:",
         why="Two unrelated organizations both cite glueup.com in the real data. "
         "Keying identity on a rented platform host merges strangers.",
+        tests=("tests/test_keys.py",),
     ),
     Mutation(
         name="chapter-qualifier-disabled",
@@ -193,6 +214,7 @@ MUTATIONS: list[Mutation] = [
         new='_CHAPTER_MARKERS = set() or {"nothing",',
         why="Nine SAME posts share same.org and twelve HFMA chapters share hfma.org. "
         "Without the place qualifier they collapse into one organization.",
+        tests=("tests/test_keys.py",),
     ),
     Mutation(
         name="council-treated-as-chapter-marker",
@@ -201,6 +223,7 @@ MUTATIONS: list[Mutation] = [
         new='"roundtable", "section", "branch", "affiliate", "council"}',
         why="Splits 'SC Manufacturers Council' from 'SC Manufacturers & Commerce' — "
         "the exact bug that let a permanently rejected organization survive.",
+        tests=("tests/test_keys.py",),
     ),
     Mutation(
         name="entity-marker-disabled",
@@ -209,6 +232,7 @@ MUTATIONS: list[Mutation] = [
         new="_DISTINCT_ENTITY_MARKERS = set()",
         why="A chamber and its foundation are separate legal entities sharing one "
         "domain; without this marker they merge.",
+        tests=("tests/test_keys.py",),
     ),
     Mutation(
         name="generic-pages-not-collapsed",
@@ -216,6 +240,7 @@ MUTATIONS: list[Mutation] = [
         old="    if is_generic_program_page(mechanism):",
         new="    if False:",
         why="A 'Forums' page and an 'Events' page at one body become two routes.",
+        tests=("tests/test_keys.py",),
     ),
     Mutation(
         name="years-split-recurring-series",
@@ -224,6 +249,7 @@ MUTATIONS: list[Mutation] = [
         new='    without_years = text or ""',
         why="'2nd Annual Summit' and '3rd Annual Summit' become different series "
         "instead of one recurring mechanism with two occurrences.",
+        tests=("tests/test_keys.py",),
     ),
     # --- secrets ----------------------------------------------------------
     Mutation(
@@ -232,6 +258,7 @@ MUTATIONS: list[Mutation] = [
         old="    for value in _SECRET_VALUES:",
         new="    for value in []:",
         why="API keys and the sheet bridge token would appear in log output.",
+        tests=("tests/test_secrets.py",),
     ),
     Mutation(
         name="missing-keys-not-reported",
@@ -239,6 +266,7 @@ MUTATIONS: list[Mutation] = [
         old="    missing = secrets.missing(*names)",
         new="    missing = []",
         why="A run starts, spends money, and dies halfway on a missing key.",
+        tests=("tests/test_secrets.py",),
     ),
     # --- run harness: checkpointing, isolation and honest reporting -------
     Mutation(
@@ -247,6 +275,7 @@ MUTATIONS: list[Mutation] = [
         old='TERMINAL_ITEM_STATES: frozenset[str] = frozenset({"done", "failed", "skipped"})',
         new='TERMINAL_ITEM_STATES: frozenset[str] = frozenset({"done"})',
         why="A page that 404s is retried forever inside the same run, burning budget.",
+        tests=("tests/test_repos.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="mid-flight-item-stranded",
@@ -256,6 +285,7 @@ MUTATIONS: list[Mutation] = [
         '{"done", "failed", "skipped", "running"})',
         why="Treating 'running' as terminal strands whatever the crash interrupted: the "
         "item the process died on is never retried and the loss is invisible.",
+        tests=("tests/test_repos.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="checkpoint-not-consulted",
@@ -264,6 +294,7 @@ MUTATIONS: list[Mutation] = [
         new="        if False:",
         why="Ignoring the checkpoint makes a resumed run redo every completed item, "
         "which is the cost blow-up checkpointing exists to prevent.",
+        tests=("tests/test_context.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="unclaimed-completion-silent",
@@ -271,6 +302,7 @@ MUTATIONS: list[Mutation] = [
         old="        if not updated:",
         new="        if False:",
         why="Bookkeeping that silently does nothing turns the run report into fiction.",
+        tests=("tests/test_context.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="finish-item-always-claims-success",
@@ -279,6 +311,7 @@ MUTATIONS: list[Mutation] = [
         new="        return True",
         why="A repo that reports success for an item it never touched hides the bug "
         "the caller's guard exists to catch.",
+        tests=("tests/test_repos.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="reclaim-keeps-stale-outcome",
@@ -287,6 +320,7 @@ MUTATIONS: list[Mutation] = [
         new='            " finished_at = finished_at, error = error",',
         why="A retried item carrying the previous attempt's error and finish stamp "
         "reads as failed-then-succeeded, and the report cannot be trusted.",
+        tests=("tests/test_repos.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="failure-recorded-as-success",
@@ -295,6 +329,7 @@ MUTATIONS: list[Mutation] = [
         new="            self.complete(stage, item_key)",
         why="An item that crashed but is marked done is never retried and never "
         "reported: silent data loss dressed up as a clean run.",
+        tests=("tests/test_context.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="one-bad-page-kills-the-run",
@@ -302,6 +337,7 @@ MUTATIONS: list[Mutation] = [
         old="        except Exception as exc:",
         new="        except KeyboardInterrupt as exc:",
         why="Without per-item isolation one malformed page ends a harvest of four hundred.",
+        tests=("tests/test_context.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="not-reached-dropped",
@@ -310,6 +346,7 @@ MUTATIONS: list[Mutation] = [
         new="        pass",
         why="Dropping truncation lets silence read as completeness, which is how the "
         "predecessor reported success on runs that produced nothing.",
+        tests=("tests/test_context.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="counters-lost-on-crash",
@@ -318,6 +355,7 @@ MUTATIONS: list[Mutation] = [
         new="        pass",
         why="Counters totalled only at close vanish with the process that dies, and "
         "that is exactly the run whose numbers matter.",
+        tests=("tests/test_context.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="unknown-counter-ignored",
@@ -325,6 +363,7 @@ MUTATIONS: list[Mutation] = [
         old="        if name not in COUNTERS:",
         new="        if False:",
         why="A typo'd counter that silently no-ops reports real work as zero.",
+        tests=("tests/test_context.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="counter-column-not-whitelisted",
@@ -333,6 +372,7 @@ MUTATIONS: list[Mutation] = [
         new="        if False:",
         why="The counter name is interpolated into SQL. Without the whitelist that is "
         "an injection point, not a convenience.",
+        tests=("tests/test_repos.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="cost-not-persisted",
@@ -341,6 +381,7 @@ MUTATIONS: list[Mutation] = [
         ' units, usd,"\n            " recorded_at) VALUES (?,?,?,?,?,?,?)",',
         new='            "SELECT ?,?,?,?,?,?,?",',
         why="Unpersisted spend makes cost-per-good-route uncomputable and hides a price spike.",
+        tests=("tests/test_repos.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="cost-not-scoped-to-the-run",
@@ -350,6 +391,7 @@ MUTATIONS: list[Mutation] = [
         new='            "SELECT COALESCE(SUM(usd), 0.0) s FROM cost_event WHERE ? IS NOT NULL",'
         " (run_id,)",
         why="Billing every run for every other run's spend makes the number meaningless.",
+        tests=("tests/test_repos.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="aborted-run-reported-ok",
@@ -358,6 +400,7 @@ MUTATIONS: list[Mutation] = [
         new='        ctx.finish("ok")',
         why="A run that died reporting 'ok' is the most dangerous lie the system can "
         "tell, because nobody goes looking for the missing half.",
+        tests=("tests/test_context.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="error-text-untruncated",
@@ -365,6 +408,7 @@ MUTATIONS: list[Mutation] = [
         old="MAX_LOGGED_ERROR = 500",
         new="MAX_LOGGED_ERROR = 5_000_000",
         why="A two-megabyte HTML body in a log line is how log files become unreadable.",
+        tests=("tests/test_context.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="raw-sql-guard-blind",
@@ -373,6 +417,7 @@ MUTATIONS: list[Mutation] = [
         new='RAW_SQL = re.compile(r"this-will-never-match")',
         why="The architectural boundary is only real while its scanner can see a "
         "violation. A blind guard is worse than none: it reports compliance.",
+        tests=("tests/test_repos.py",),
     ),
     # --- extraction contract ----------------------------------------------
     Mutation(
@@ -382,6 +427,7 @@ MUTATIONS: list[Mutation] = [
         new="        if False:",
         why="Without the span rule a model can assert anything about a page and the "
         "record is indistinguishable from an extracted one. This is THE rule.",
+        tests=("tests/test_schemas.py",),
     ),
     Mutation(
         name="whitespace-counts-as-a-span",
@@ -390,6 +436,7 @@ MUTATIONS: list[Mutation] = [
         new="        has_span = self.span is not None",
         why="A span of three spaces satisfies the letter of the rule and supports "
         "nothing, which is exactly how an evidence trail rots.",
+        tests=("tests/test_schemas.py",),
     ),
     Mutation(
         name="not-stated-may-carry-a-span",
@@ -398,6 +445,7 @@ MUTATIONS: list[Mutation] = [
         new="        if False:",
         why="A quote attached to 'not stated' is a contradiction, and a contradictory "
         "evidence trail is worse than a gap.",
+        tests=("tests/test_schemas.py",),
     ),
     Mutation(
         name="extra-keys-allowed",
@@ -406,6 +454,7 @@ MUTATIONS: list[Mutation] = [
         new='    model_config = ConfigDict(frozen=True, extra="allow")\n\n\n# --- common',
         why="An invented field is an invented claim; allowing extras lets one through "
         "silently instead of failing the record.",
+        tests=("tests/test_schemas.py",),
     ),
     Mutation(
         name="malformed-output-not-retried",
@@ -414,6 +463,7 @@ MUTATIONS: list[Mutation] = [
         new="            break\n        return record",
         why="One bad answer quarantines a page that a single retry with the error "
         "would have fixed, and real yield drops for no reason.",
+        tests=("tests/test_schemas.py",),
     ),
     Mutation(
         name="retry-feedback-is-generic",
@@ -423,6 +473,7 @@ MUTATIONS: list[Mutation] = [
         new='                "Your previous answer was rejected. Try again."',
         why="A retry that does not name the violation is a coin flip. The errors are "
         "the only thing that makes the second attempt better than the first.",
+        tests=("tests/test_schemas.py",),
     ),
     Mutation(
         name="quarantine-becomes-repair",
@@ -431,6 +482,7 @@ MUTATIONS: list[Mutation] = [
         new="    return SCHEMAS[family].model_construct(**(raw if isinstance(raw, dict) else {}))",
         why="model_construct skips validation. This is the exact shape of 'coerce it "
         "into a record so the pipeline keeps moving', which the contract forbids.",
+        tests=("tests/test_schemas.py",),
     ),
     Mutation(
         name="quarantine-drops-the-evidence",
@@ -439,6 +491,7 @@ MUTATIONS: list[Mutation] = [
         new="errors=[], raw=None)",
         why="A quarantine that throws away the payload and the reasons teaches nothing "
         "and cannot be debugged.",
+        tests=("tests/test_schemas.py",),
     ),
     Mutation(
         name="impossible-dates-accepted",
@@ -447,6 +500,7 @@ MUTATIONS: list[Mutation] = [
         new="            pass",
         why="2026-02-31 passes the pattern and fails the calendar. It looks usable, "
         "which is worse than missing.",
+        tests=("tests/test_schemas.py",),
     ),
     Mutation(
         name="trigger-dates-unchecked",
@@ -455,6 +509,7 @@ MUTATIONS: list[Mutation] = [
         new="            pass",
         why="The EMPLOYER family is built on recency; an uncheckable trigger date "
         "makes the decay meaningless.",
+        tests=("tests/test_schemas.py",),
     ),
     Mutation(
         name="employer-route-without-a-trigger",
@@ -463,6 +518,7 @@ MUTATIONS: list[Mutation] = [
         new="        if False:",
         why="With nothing that changed there is no reason to call. The family's whole "
         "premise is that something just happened.",
+        tests=("tests/test_schemas.py",),
     ),
     Mutation(
         name="route-type-not-constrained",
@@ -471,6 +527,7 @@ MUTATIONS: list[Mutation] = [
         new="    route_type: Field[Any]",
         why="An unconstrained route_type lets the model answer with a type that has no "
         "score, and the route silently ranks at zero.",
+        tests=("tests/test_schemas.py",),
     ),
     Mutation(
         name="founder-field-exposed",
@@ -480,6 +537,7 @@ MUTATIONS: list[Mutation] = [
         "    role_change: RoleChange",
         why="known_to_art is the founder's answer. A slot in the schema is an "
         "invitation for a model to guess it, and the guess would outrank the truth.",
+        tests=("tests/test_schemas.py",),
     ),
     Mutation(
         name="non-json-response-crashes",
@@ -488,6 +546,7 @@ MUTATIONS: list[Mutation] = [
         new="        except KeyboardInterrupt as exc:",
         why="A model that answers in prose must be a violation the retry can handle, "
         "not an exception that ends the run.",
+        tests=("tests/test_schemas.py",),
     ),
     Mutation(
         name="prompt-clause-dropped",
@@ -496,6 +555,7 @@ MUTATIONS: list[Mutation] = [
         new="",
         why="Each clause is a failure the predecessor actually made. Dropping one is "
         "how last year's closed call comes back as this year's opportunity.",
+        tests=("tests/test_schemas.py",),
     ),
     # --- acquisition: snapshots and the fetch cache ------------------------
     Mutation(
@@ -505,6 +565,7 @@ MUTATIONS: list[Mutation] = [
         new="        if False:",
         why="Rewriting a stored snapshot rewrites history, and history is the only "
         "thing the store exists for. Every past extraction becomes unverifiable.",
+        tests=("tests/test_snapshot.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="snapshot-hash-ignores-whitespace-rule",
@@ -513,6 +574,7 @@ MUTATIONS: list[Mutation] = [
         new="    return text",
         why="Providers re-wrap markdown between calls. Hashing raw bytes stores the "
         "same page a dozen times and defeats both the cache and the audit.",
+        tests=("tests/test_snapshot.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="snapshot-key-unvalidated",
@@ -521,6 +583,7 @@ MUTATIONS: list[Mutation] = [
         new="        if False:",
         why="A snapshot is addressed by content, never by a name someone chose. An "
         "unvalidated key is also a path-traversal write into the data directory.",
+        tests=("tests/test_snapshot.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="missing-snapshot-reads-as-empty",
@@ -529,6 +592,7 @@ MUTATIONS: list[Mutation] = [
         new="        if False:",
         why="An empty string reads like a page that said nothing, and the extractor "
         "would faithfully record not_stated for a page it never saw.",
+        tests=("tests/test_snapshot.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="snapshot-write-not-atomic",
@@ -537,6 +601,7 @@ MUTATIONS: list[Mutation] = [
         new="            path.write_bytes(tmp.read_bytes()[:-1])",
         why="A process killed mid-write must leave nothing or a whole file, never a "
         "truncated archive that reads as a valid but shorter page.",
+        tests=("tests/test_snapshot.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="cache-never-hits",
@@ -545,6 +610,7 @@ MUTATIONS: list[Mutation] = [
         new="        cached = None",
         why="Re-fetching every page every run is what the cache exists to prevent; "
         "the bill and the rate limit both notice.",
+        tests=("tests/test_fetch.py",),
     ),
     Mutation(
         name="cache-ignores-age",
@@ -553,6 +619,7 @@ MUTATIONS: list[Mutation] = [
         new="        if record is None:",
         why="A cache with no expiry serves last year's page forever, and a deadline "
         "that appeared on Tuesday is never seen.",
+        tests=("tests/test_fetch.py",),
     ),
     Mutation(
         name="cache-hit-without-the-bytes",
@@ -561,6 +628,7 @@ MUTATIONS: list[Mutation] = [
         new="        if False:",
         why="If the index outlives the bytes, a hit raises instead of re-fetching and "
         "the page becomes permanently unreadable.",
+        tests=("tests/test_fetch.py",),
     ),
     Mutation(
         name="future-timestamp-reads-as-fresh",
@@ -569,6 +637,7 @@ MUTATIONS: list[Mutation] = [
         new="    return (current - then).total_seconds()",
         why="Clock skew produces a negative age, which makes a stale page look "
         "permanently fresh and it is never re-read.",
+        tests=("tests/test_fetch.py",),
     ),
     Mutation(
         name="failed-call-never-billed",
@@ -577,6 +646,7 @@ MUTATIONS: list[Mutation] = [
         new="            self.stats.failures += 1",
         why="A ledger that counts only successes understates the bill exactly when "
         "things are going wrong and spend is spiking.",
+        tests=("tests/test_fetch.py",),
     ),
     Mutation(
         name="snapshot-indexed-before-it-is-stored",
@@ -585,6 +655,7 @@ MUTATIONS: list[Mutation] = [
         new="        self.store.fetch_log.record(",
         why="Extraction reads only from the store, so an index entry pointing at bytes "
         "that were never written is a page that cannot be read.",
+        tests=("tests/test_fetch.py",),
     ),
     Mutation(
         name="empty-page-accepted",
@@ -593,6 +664,7 @@ MUTATIONS: list[Mutation] = [
         new="        if False:",
         why="A blank snapshot extracts cleanly as 'the page states nothing', which is "
         "indistinguishable from a real thin page and is a lie about a failed fetch.",
+        tests=("tests/test_fetch.py",),
     ),
     Mutation(
         name="permanent-failures-retried",
@@ -600,6 +672,7 @@ MUTATIONS: list[Mutation] = [
         old="                if not exc.retryable:",
         new="                if False:",
         why="Retrying a 404 three times burns budget and hides the answer.",
+        tests=("tests/test_fetch.py",),
     ),
     Mutation(
         name="retries-unbounded",
@@ -607,6 +680,7 @@ MUTATIONS: list[Mutation] = [
         old="                if attempt < self.max_attempts:",
         new="                if True:",
         why="An unbounded retry against a rate limiter turns one bad page into a stalled run.",
+        tests=("tests/test_fetch.py",),
     ),
     Mutation(
         name="rate-limit-not-retryable",
@@ -615,6 +689,7 @@ MUTATIONS: list[Mutation] = [
         new="RETRYABLE_STATUS = frozenset({500})",
         why="A 429 is the single most common transient failure; not retrying it drops "
         "pages that were one short wait away.",
+        tests=("tests/test_fetch.py",),
     ),
     Mutation(
         name="resolved-url-collapsed-into-requested",
@@ -623,6 +698,7 @@ MUTATIONS: list[Mutation] = [
         new="canonical_url=url,",
         why="Conflating where a page resolved with what was requested is how one page "
         "ends up in the database three times, under three organizations.",
+        tests=("tests/test_fetch.py",),
     ),
     Mutation(
         name="unchanged-refetch-counted-as-change",
@@ -631,6 +707,7 @@ MUTATIONS: list[Mutation] = [
         new="     + 1",
         why="Counting a re-read as a change makes every page look volatile and destroys "
         "the only stability signal the fetch log carries.",
+        tests=("tests/test_repos.py", "tests/test_fetch.py"),
     ),
     Mutation(
         name="first-fetch-timestamp-moves",
@@ -640,12 +717,16 @@ MUTATIONS: list[Mutation] = [
         ' last_fetched_at = excluded.last_fetched_at,"',
         why="first_fetched_at is the anchor for how long a page has been known; moving "
         "it makes every page look newly discovered.",
+        tests=("tests/test_repos.py", "tests/test_fetch.py"),
     ),
 ]
 
 
-def run_suite() -> tuple[bool, str]:
+def run_suite(paths: tuple[str, ...] = ()) -> tuple[bool, str]:
     """Run the suite against whatever is currently on disk. Returns (passed, output).
+
+    ``paths`` narrows the run to specific test files. Used only as a speed hint:
+    the caller re-runs everything before reporting a survivor.
 
     Deliberately runs in ROOT rather than a copied tree. The package is
     installed editable (PEP 660), which resolves imports through a meta-path
@@ -655,7 +736,7 @@ def run_suite() -> tuple[bool, str]:
     while testing nothing.
     """
     proc = subprocess.run(
-        [sys.executable, "-B", "-m", "pytest", "-x", "-q", "--no-header"],
+        [sys.executable, "-B", "-m", "pytest", "-x", "-q", "--no-header", *(paths or ())],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -740,7 +821,11 @@ def main() -> int:
                 print(f"  {i:2}. {mut.name:34} STALE — target text not found")
                 continue
 
-            passed, output = run_suite()
+            passed, output = run_suite(mut.tests)
+            if passed and mut.tests:
+                # The subset missed it. Before calling this a gap, run the whole
+                # suite: the subset is a speed hint, never a verdict.
+                passed, output = run_suite()
             caught = not passed  # the suite failing means the mutation was caught
             print(f"  {i:2}. {mut.name:34} {'caught ' if caught else 'SURVIVED'}")
             if not caught:
