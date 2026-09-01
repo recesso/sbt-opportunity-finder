@@ -854,6 +854,116 @@ MUTATIONS: list[Mutation] = [
         why="An unbounded inventory on a large site turns one domain into thousands of fetches.",
         tests=("tests/test_map.py",),
     ),
+    # --- W1 network registration -------------------------------------------
+    Mutation(
+        name="planning-estimate-written-as-fact",
+        path="src/finder/harvest/w1_registry.py",
+        old="                node_count_actual=result.actual,",
+        new="                node_count_actual=network.node_count_est,",
+        why="node_count_est is an order-of-magnitude planning figure. Written as data "
+        "it stops being one the moment anything reads it back, and the config's own "
+        "warning becomes decoration.",
+        tests=("tests/test_w1.py",),
+    ),
+    Mutation(
+        name="implausible-yield-not-reported",
+        path="src/finder/harvest/w1_registry.py",
+        old="        if result.actual >= estimate * IMPLAUSIBLE_YIELD_RATIO:",
+        new="        if True:",
+        why="Three nodes against an estimate of fifty-one means the extraction broke. "
+        "Reporting success there is how a whole network silently disappears from the "
+        "harvest with nobody noticing.",
+        tests=("tests/test_w1.py",),
+    ),
+    Mutation(
+        name="network-is-its-own-member",
+        path="src/finder/harvest/w1_registry.py",
+        old="        if domain and domain == parent:",
+        new="        if False:",
+        why="A directory links to itself constantly. Registering NIST as a member of "
+        "the NIST network pollutes every downstream count.",
+        tests=("tests/test_w1.py",),
+    ),
+    Mutation(
+        name="duplicate-members-registered-twice",
+        path="src/finder/harvest/w1_registry.py",
+        old="        if domain in seen:\n            continue",
+        new="        if False:\n            continue",
+        why="Directories link the same member by name and again by logo. Two nodes for "
+        "one organization is the duplicate problem this project exists to end.",
+        tests=("tests/test_w1.py",),
+    ),
+    Mutation(
+        name="generic-anchors-become-organizations",
+        path="src/finder/harvest/w1_registry.py",
+        old="    if len(cleaned) < _MIN_NAME_LEN or cleaned.lower() in _GENERIC_ANCHORS:",
+        new="    if False:",
+        why="'Learn more' and 'here' would become organizations, each costing a map "
+        "call and appearing in the registry as a real body.",
+        tests=("tests/test_w1.py",),
+    ),
+    Mutation(
+        name="hostless-domain-accepted",
+        path="src/finder/harvest/w1_registry.py",
+        old='    if not domain or "." not in domain or domain in _CHROME_DOMAINS:',
+        new="    if not domain:",
+        why="`https://intranet/members` becomes an organization called 'intranet' that "
+        "nothing can ever fetch, and social links become member bodies.",
+        tests=("tests/test_w1.py",),
+    ),
+    Mutation(
+        name="seed-without-domain-silently-dropped",
+        path="src/finder/harvest/w1_registry.py",
+        old="            unresolved.append(seed.name)",
+        new="            pass",
+        why="'Align Wisconsin, domain unknown' is a research task, not a non-entity. "
+        "Dropping it silently loses a named target the founder himself picked out.",
+        tests=("tests/test_w1.py",),
+    ),
+    Mutation(
+        name="unreachable-directory-reads-as-empty",
+        path="src/finder/harvest/w1_registry.py",
+        old='self._not_reached(run, "directory_unreachable"',
+        new='self._not_reached(None, "directory_unreachable"',
+        why="A network whose directory 503'd is not a network with no members, and a "
+        "run report that lets those look the same is lying.",
+        tests=("tests/test_w1.py",),
+    ),
+    Mutation(
+        name="unimplemented-discovery-looks-empty",
+        path="src/finder/harvest/w1_registry.py",
+        old='                "no_enumeration_path",',
+        new='                "",',
+        why="ga_adjacent_chambers is enumerated by AMS host patterns, which W1 does not "
+        "implement. Two hundred chambers must not vanish under a blank reason.",
+        tests=("tests/test_w1.py",),
+    ),
+    Mutation(
+        name="provenance-lost",
+        path="src/finder/harvest/w1_registry.py",
+        old='                discovered_from=f"directory:{network.directory_url}",',
+        new='                discovered_from="",',
+        why="Where an organization came from is what makes a bad batch traceable to the "
+        "directory that produced it.",
+        tests=("tests/test_w1.py",),
+    ),
+    Mutation(
+        name="harvest-not-isolated-per-network",
+        path="src/finder/harvest/w1_registry.py",
+        old='            with run.item("register", network.id) as claimed:',
+        new='            with run.item("register", "all") as claimed:',
+        why="Keying every network to one item means the first one done marks the rest "
+        "complete, and fourteen networks are skipped on a resume.",
+        tests=("tests/test_w1.py",),
+    ),
+    Mutation(
+        name="network-count-overwritten-by-null",
+        path="src/finder/store/repos.py",
+        old='"     excluded.node_count_actual, network.node_count_actual),"',
+        new='"     excluded.node_count_actual, NULL),"',
+        why="A later pass that did not count would blank the count an earlier one established.",
+        tests=("tests/test_w1.py", "tests/test_repos.py"),
+    ),
 ]
 
 

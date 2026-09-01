@@ -5,7 +5,7 @@ the build. Everything else in the system works with the dataclasses in
 ``models.py``.
 
 Only the entities on the M1 path plus the founder-owned ones are implemented.
-Repositories for occurrence, network and signal are deliberately deferred until
+Repositories for occurrence and signal are deliberately deferred until
 a worker actually writes them — an unused abstraction is a liability, not a head
 start. The tables exist; the accessors arrive with the code that needs them.
 
@@ -28,6 +28,7 @@ from finder.store.models import (
     Evidence,
     FetchRecord,
     FounderMark,
+    Network,
     Organization,
     Person,
     Rejection,
@@ -1110,6 +1111,67 @@ class FetchLogRepo(_Repo):
         )
 
 
+class NetworkRepo(_Repo):
+    """The network registry. Organizations reference it, so it is written first.
+
+    ``node_count_actual`` holds what W1 counted. The planning estimate from
+    ``networks.yaml`` never reaches this table — a figure written as data stops
+    being a planning figure the moment something reads it back.
+    """
+
+    def upsert(self, net: Network) -> Network:
+        self._exec(
+            "INSERT INTO network (network_id, name, directory_url, discovery_method,"
+            " sectors, tier, node_count_actual, last_refreshed) VALUES (?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(network_id) DO UPDATE SET"
+            "   name = excluded.name,"
+            "   directory_url = excluded.directory_url,"
+            "   discovery_method = excluded.discovery_method,"
+            "   sectors = excluded.sectors,"
+            "   tier = excluded.tier,"
+            "   node_count_actual = COALESCE("
+            "     excluded.node_count_actual, network.node_count_actual),"
+            "   last_refreshed = COALESCE(excluded.last_refreshed, network.last_refreshed)",
+            (
+                net.network_id,
+                net.name,
+                net.directory_url,
+                net.discovery_method,
+                _dump(net.sectors),
+                net.tier,
+                net.node_count_actual,
+                net.last_refreshed,
+            ),
+        )
+        got = self.get(net.network_id)
+        if got is None:  # pragma: no cover - insert succeeded or raised
+            raise RepoError(f"network {net.network_id} did not persist")
+        return got
+
+    def get(self, network_id: str) -> Network | None:
+        row = self._one("SELECT * FROM network WHERE network_id = ?", (network_id,))
+        return self._row(row) if row else None
+
+    def all(self) -> list[Network]:
+        return [self._row(r) for r in self._all("SELECT * FROM network ORDER BY network_id")]
+
+    def count(self) -> int:
+        return self._one("SELECT COUNT(*) c FROM network")["c"]  # type: ignore[index]
+
+    @staticmethod
+    def _row(row: sqlite3.Row) -> Network:
+        return Network(
+            network_id=row["network_id"],
+            name=row["name"],
+            tier=row["tier"],
+            sectors=_json_list(row["sectors"]),
+            directory_url=row["directory_url"],
+            discovery_method=row["discovery_method"],
+            node_count_actual=row["node_count_actual"],
+            last_refreshed=row["last_refreshed"],
+        )
+
+
 class Store:
     """All repositories over one connection, plus the unit of work.
 
@@ -1119,6 +1181,7 @@ class Store:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
+        self.networks = NetworkRepo(conn)
         self.organizations = OrganizationRepo(conn)
         self.employers = EmployerRepo(conn)
         self.people = PersonRepo(conn)

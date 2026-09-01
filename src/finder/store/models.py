@@ -222,3 +222,22 @@ class FetchRecord:
     links: list[str] = field(default_factory=list)
     fetch_count: int = 1
     change_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class Network:
+    """A template that replicates across N nodes.
+
+    ``node_count_actual`` is what W1 counted in the network's own directory. The
+    planning estimate in ``networks.yaml`` is never written here — the DDL says
+    so and this is the field it is talking about.
+    """
+
+    network_id: str
+    name: str
+    tier: str
+    sectors: list[str] = field(default_factory=list)
+    directory_url: str | None = None
+    discovery_method: str | None = None
+    node_count_actual: int | None = None
+    last_refreshed: str | None = None

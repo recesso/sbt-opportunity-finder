@@ -32,6 +32,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+# RUF001 flags en/em dashes as "ambiguous". They are deliberate: prose uses
+# them, and so do the directory pages this code parses.
+ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
