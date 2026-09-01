@@ -719,6 +719,141 @@ MUTATIONS: list[Mutation] = [
         "it makes every page look newly discovered.",
         tests=("tests/test_repos.py", "tests/test_fetch.py"),
     ),
+    # --- URL inventory ------------------------------------------------------
+    Mutation(
+        name="matched-term-not-recorded",
+        path="src/finder/acquire/map.py",
+        old="                matched_term=matched[0],",
+        new='                matched_term="",',
+        why="Which term matched IS the signal. A URL found by 'call for speakers' is "
+        "a different animal from one found by 'blog', and the reranker has nothing "
+        "to work from without it.",
+        tests=("tests/test_map.py",),
+    ),
+    Mutation(
+        name="weakest-term-reported",
+        path="src/finder/acquire/map.py",
+        old="                candidate = (-len(needle), order, term, where)",
+        new="                candidate = (len(needle), order, term, where)",
+        why="Reporting 'speak' for a page found by 'call for speakers' understates "
+        "the strongest evidence on the page.",
+        tests=("tests/test_map.py",),
+    ),
+    Mutation(
+        name="term-matches-inside-a-word",
+        path="src/finder/acquire/map.py",
+        old='            if f" {needle} " in hay:',
+        new="            if needle in hay:",
+        why="'council' would fire on 'councilman' and every civic page becomes a "
+        "council seat. Substring matching is exactly how the predecessor's recall "
+        "filled with noise.",
+        tests=("tests/test_map.py",),
+    ),
+    Mutation(
+        name="hyphens-not-normalised",
+        path="src/finder/acquire/map.py",
+        old='_SEPARATORS = re.compile(r"[-_/+.,=&?:;~%#|]+")',
+        new='_SEPARATORS = re.compile(r"[/]+")',
+        why="'call-for-speakers' would stop matching 'call for speakers', which is "
+        "the single most valuable term in the list.",
+        tests=("tests/test_map.py",),
+    ),
+    Mutation(
+        name="query-string-not-searched",
+        path="src/finder/acquire/map.py",
+        old='        haystacks = (("path", _searchable(f"{parts.path} {parts.query}")),)',
+        new='        haystacks = (("path", _searchable(parts.path)),)',
+        why="On an AMS host the query string carries the section, so committee and "
+        "event pages stop matching entirely.",
+        tests=("tests/test_map.py",),
+    ),
+    Mutation(
+        name="tracking-params-kept",
+        path="src/finder/acquire/map.py",
+        old="        if pair and not pair.lower().startswith(_TRACKING_PREFIXES)",
+        new="        if pair",
+        why="The same page arriving from a newsletter and from search becomes two "
+        "URLs, two fetches and two routes.",
+        tests=("tests/test_map.py",),
+    ),
+    Mutation(
+        name="meaningful-query-discarded",
+        path="src/finder/acquire/map.py",
+        old='    return urlunsplit((parts.scheme, parts.netloc, path, query, ""))',
+        new='    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))',
+        why="On an AMS host the query string IS the address of the event page; "
+        "dropping it collapses every event onto one URL.",
+        tests=("tests/test_map.py",),
+    ),
+    Mutation(
+        name="duplicate-urls-kept",
+        path="src/finder/acquire/map.py",
+        old="        if not is_fetchable(url) or url in seen:",
+        new="        if not is_fetchable(url):",
+        why="One page under three URLs is three fetches and three candidate routes, "
+        "which is how the predecessor accumulated 880 duplicates.",
+        tests=("tests/test_map.py",),
+    ),
+    Mutation(
+        name="fallback-never-runs",
+        path="src/finder/acquire/map.py",
+        old="            except FetchError as exc:",
+        new="            except FetchError as exc:\n                raise exc",
+        why="A provider outage would take out every domain in the run instead of "
+        "falling back to the sitemap.",
+        tests=("tests/test_map.py",),
+    ),
+    Mutation(
+        name="unmappable-domain-reads-as-empty",
+        path="src/finder/acquire/map.py",
+        old='            run.record_not_reached("map_failed", f"{domain}: " + "; ".join(failures))',
+        new="            pass",
+        why="A domain nobody could map is not a domain with nothing on it, and the "
+        "run report must not let the two look the same.",
+        tests=("tests/test_map.py",),
+    ),
+    Mutation(
+        name="sitemap-index-not-followed",
+        path="src/finder/acquire/map.py",
+        old='        if _tag(root) != "sitemapindex":',
+        new="        if True:",
+        why="Large association sites publish only an index; not following it means "
+        "the fallback returns nothing exactly where it is most needed.",
+        tests=("tests/test_map.py",),
+    ),
+    Mutation(
+        name="sitemap-recursion-unbounded",
+        path="src/finder/acquire/map.py",
+        old="        if depth > 0:",
+        new="        if False:",
+        why="A self-referencing index is common and would loop until the run dies.",
+        tests=("tests/test_map.py",),
+    ),
+    Mutation(
+        name="gzipped-sitemap-not-decompressed",
+        path="src/finder/acquire/map.py",
+        old='        if url.endswith(".gz") or content[:2] == b"\\x1f\\x8b":',
+        new="        if False:",
+        why="Gzipped sitemaps are common on association hosts; unread, the fallback "
+        "silently finds nothing there.",
+        tests=("tests/test_map.py",),
+    ),
+    Mutation(
+        name="assets-fetched",
+        path="src/finder/acquire/map.py",
+        old='    return bool(url) and not url.lower().split("?")[0].endswith(_SKIP_SUFFIXES)',
+        new="    return bool(url)",
+        why="Fetching CSS and images costs a call each and extracts nothing.",
+        tests=("tests/test_map.py",),
+    ),
+    Mutation(
+        name="map-limit-ignored",
+        path="src/finder/acquire/map.py",
+        old="        if len(hits) >= limit:",
+        new="        if False:",
+        why="An unbounded inventory on a large site turns one domain into thousands of fetches.",
+        tests=("tests/test_map.py",),
+    ),
 ]
 
 
