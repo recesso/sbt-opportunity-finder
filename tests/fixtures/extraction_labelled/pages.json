@@ -1,0 +1,162 @@
+{
+  "_README": [
+    "Ten labelled pages for the W3 extractor.",
+    "",
+    "These are SYNTHETIC pages, hand-written to reproduce the shapes that actually",
+    "broke the predecessor system. They are not copies of real sites and must not",
+    "be described as such. Their job is to let the extractor's own behaviour be",
+    "tested offline and deterministically: span checking, dropping unsupported",
+    "fields, thin-page restraint, off-domain route_url, past-cycle rejection.",
+    "",
+    "Measuring FIELD ACCURACY of a real model is a different exercise and needs",
+    "real recorded pages plus a live call. That is scripts/eval_extraction.py,",
+    "run deliberately with `make eval-extraction` once fixtures are recorded.",
+    "",
+    "`expect` records what a correct extraction says. `not_stated` means the page",
+    "does not say, and asserting that is the point on the thin pages: a thin page",
+    "must produce a thin record."
+  ],
+  "pages": [
+    {
+      "id": "open_call",
+      "family": "ROOM",
+      "url": "https://example-aiweek.org/apply-to-speak",
+      "note": "An open rolling call. The shape of the one Art actually submitted to.",
+      "markdown": "# Apply to Speak\n\nAI Week is accepting proposals from speakers, trainers and sponsors on a rolling basis. There is no deadline; sessions are reviewed monthly.\n\nTracks: manufacturing, healthcare, financial services, and workforce.\n\nFormats: 45-minute workshop, 20-minute talk, panel.\n\nQuestions? Contact Zack Huhn, Program Director, at programs@example-aiweek.org.\n",
+      "expect": {
+        "route_type": "EVERGREEN_SUBMISSION",
+        "route_url": "https://example-aiweek.org/apply-to-speak",
+        "deadline": "not_stated",
+        "owner": "Zack Huhn",
+        "formats_accepted": ["workshop", "talk", "panel"]
+      }
+    },
+    {
+      "id": "offdomain_form",
+      "family": "ROOM",
+      "url": "https://example-gsae.org/speaker-interest-form",
+      "note": "THE GSAE CASE. The form is on another host, in body text. Missing this is why Art could not find it by hand.",
+      "markdown": "# Speaker Interest\n\nThe education committee sets themes in early October each year.\n\nMembers and non-members may express interest in speaking by completing our short form: https://www.surveymonkey.com/r/EXAMPLE1\n\nWe look for sessions that help association professionals run better organizations.\n",
+      "expect": {
+        "route_type": "EVERGREEN_SUBMISSION",
+        "route_url": "https://www.surveymonkey.com/r/EXAMPLE1",
+        "route_url_is_offdomain": true,
+        "deadline": "not_stated"
+      }
+    },
+    {
+      "id": "past_event",
+      "family": "ROOM",
+      "url": "https://example-mep.org/event/your-workforce-as-a-competitive-advantage",
+      "note": "A PAST event. The predecessor served exactly this page as a way in. There is no route here.",
+      "markdown": "# Your Workforce as a Competitive Advantage\n\nThis event took place on March 12, 2025 at the Macon Centreplex.\n\nThank you to everyone who attended. Slides from the session are available to members.\n\nSee our events calendar for what is coming up.\n",
+      "expect": {
+        "route_type": "UNKNOWN",
+        "route_url": "not_stated",
+        "deadline": "not_stated",
+        "next_occurrence": "not_stated",
+        "_comment": "A write-up of something that happened is not an opportunity."
+      }
+    },
+    {
+      "id": "service_channel",
+      "family": "CHANNEL",
+      "url": "https://example-mep.org/services/workforce-development",
+      "note": "THE GAMEP CHANNEL CASE. A real channel with NO published intake. route_url must stay not_stated.",
+      "markdown": "# Workforce Development\n\nWe work on site with Georgia manufacturers to build workforce capability. Our statewide lunch-and-learn series is delivered by our staff and by partner instructors.\n\nWe serve more than 1,200 manufacturers across the state.\n\nContact your regional manager to discuss a project.\n",
+      "expect": {
+        "route_type": "UNKNOWN",
+        "route_url": "not_stated",
+        "employer_relationship_nature": "clients",
+        "employer_count": 1200,
+        "delivery_model": "mixed",
+        "_comment": "No intake page is published. A null route_url is the correct answer and sends this to WORTH A LOOK with a question."
+      }
+    },
+    {
+      "id": "provider_network",
+      "family": "CHANNEL",
+      "url": "https://example-training.gov/approved-providers",
+      "note": "A channel WITH an intake. The high-value CHANNEL shape.",
+      "markdown": "# Become an Approved Provider\n\nThe state customized-training program contracts with approved third-party providers to deliver training inside employer facilities.\n\nApplications are reviewed quarterly. Apply at https://example-training.gov/provider-application\n\nProviders must carry insurance and demonstrate three years of relevant delivery experience. Approval is granted by the Program Director.\n",
+      "expect": {
+        "route_type": "PROVIDER_NETWORK",
+        "intake_url": "https://example-training.gov/provider-application",
+        "intake_criteria": "insurance and three years of relevant delivery experience",
+        "employer_relationship_nature": "contracted",
+        "delivery_model": "providers"
+      }
+    },
+    {
+      "id": "committee",
+      "family": "ROOM",
+      "url": "https://example-chamber.org/about/committees",
+      "note": "A council seat. Employers in the room, a role beyond a ticket.",
+      "markdown": "# Councils and Committees\n\nOur Manufacturing Council meets monthly and is open to member companies. Council members are plant managers, operations VPs and owners.\n\nThe Education Committee shapes the annual programming calendar.\n\nTo join a council, member companies should contact Dana Whitfield, Director of Member Programs.\n",
+      "expect": {
+        "route_type": "COUNCIL_SEAT",
+        "owner": "Dana Whitfield",
+        "member_unit": "company",
+        "stated_roles": ["plant managers", "operations VPs", "owners"],
+        "route_url": "not_stated"
+      }
+    },
+    {
+      "id": "thin_page",
+      "family": "ROOM",
+      "url": "https://example-assn.org/events",
+      "note": "THE THIN PAGE. The acceptance criterion names this one: it must yield not_stated, not plausible invention.",
+      "markdown": "# Events\n\nCheck back soon for upcoming events.\n",
+      "expect": {
+        "route_type": "UNKNOWN",
+        "route_url": "not_stated",
+        "deadline": "not_stated",
+        "next_occurrence": "not_stated",
+        "owner": "not_stated",
+        "eligibility": "not_stated",
+        "member_unit": "not_stated",
+        "_comment": "Almost every field is not_stated. A record padded with plausible detail here is the exact failure this system exists to prevent."
+      }
+    },
+    {
+      "id": "looks_relevant_no_route",
+      "family": "ROOM",
+      "url": "https://example-ems.org/conference",
+      "note": "Looks relevant to a keyword search and is not. Broad search returned EMS conferences; that is what this page is.",
+      "markdown": "# Annual Conference\n\nJoin emergency medical services professionals for three days of clinical education, skills labs and networking.\n\nRegistration is open. Continuing education credits available for paramedics and EMTs.\n",
+      "expect": {
+        "route_type": "OPEN_REGISTRATION",
+        "route_url": "not_stated",
+        "member_unit": "individual",
+        "_comment": "Individual practitioners, not employer decision-makers. Correctly extracted, this scores near zero rather than being filtered by hand."
+      }
+    },
+    {
+      "id": "employer_trigger",
+      "family": "EMPLOYER",
+      "url": "https://example-news.com/austal-contract",
+      "note": "A dated, citable trigger. The EMPLOYER family's whole premise.",
+      "markdown": "# Shipbuilder wins $40 million Navy sustainment contract\n\nPublished August 14, 2026\n\nExample Shipbuilding announced it has been awarded a $40 million Navy sustainment contract, and expects to add 200 production roles at its Mobile facility over the next eighteen months.\n\n\"Hiring and training at this pace is our central challenge,\" said the company's Chief Operating Officer.\n",
+      "expect": {
+        "company": "Example Shipbuilding",
+        "trigger_kind": "contract_award",
+        "trigger_occurred_on": "2026-08-14",
+        "problem_owner": "Chief Operating Officer",
+        "route_type": "NAMED_TARGET"
+      }
+    },
+    {
+      "id": "sponsor_only",
+      "family": "ROOM",
+      "url": "https://example-summit.org/sponsorship",
+      "note": "Pay to be in the room. A real route, correctly weak — not to be dressed up as a speaking slot.",
+      "markdown": "# Sponsorship Prospectus\n\nSummit sponsors receive exhibit space and logo placement. The Platinum package at $15,000 includes a 15-minute product showcase on the main stage.\n\nSponsorship closes February 28, 2027.\n",
+      "expect": {
+        "route_type": "SPONSOR_CONTENT",
+        "cost": "$15,000",
+        "deadline": "2027-02-28",
+        "_comment": "A paid showcase is not a speaking slot, and route_type carries that difference."
+      }
+    }
+  ]
+}

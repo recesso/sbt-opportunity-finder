@@ -1,4 +1,4 @@
-.PHONY: install test lint fmt check audit cov fixtures record run-weekly run-daily run-monthly backlog ready
+.PHONY: install test lint fmt check audit cov fixtures record eval-extraction run-weekly run-daily run-monthly backlog ready
 
 install:
 	python -m pip install -e ".[dev]"
@@ -31,6 +31,9 @@ run-monthly:
 
 fixtures:           ## list recorded provider responses
 	python scripts/record_fixtures.py --list
+
+eval-extraction:    ## the E5.S2 gate: >=90% field accuracy, ZERO fabricated spans (needs LLM_API_KEY)
+	python scripts/eval_extraction.py
 
 record:             ## record the three verified seed routes (needs API keys, hits the network)
 	python scripts/record_fixtures.py --seeds

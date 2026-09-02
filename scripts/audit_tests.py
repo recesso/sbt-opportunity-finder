@@ -1480,6 +1480,162 @@ MUTATIONS: list[Mutation] = [
         "stale fixture answers a question it was never asked.",
         tests=("tests/test_replay.py",),
     ),
+    # --- W3 extraction ------------------------------------------------------
+    Mutation(
+        name="fabricated-span-kept",
+        path="src/finder/extract/w3_mechanism.py",
+        old='        if verdict == "absent":',
+        new="        if False:",
+        why="THE rule. A field whose span is not in the page is not weakly supported, "
+        "it is invented, and keeping it puts fiction into the ranked list with a "
+        "citation attached.",
+        tests=("tests/test_w3.py",),
+    ),
+    Mutation(
+        name="span-check-only-top-level",
+        path="src/finder/extract/w3_mechanism.py",
+        old='        elif hasattr(type(value), "model_fields"):',
+        new="        elif False:",
+        why="audience.member_unit and intake.url are nested and are among the most "
+        "decision-bearing fields there are. A checker that skips them guards the "
+        "cheap fields and leaves the expensive ones open.",
+        tests=("tests/test_w3.py",),
+    ),
+    Mutation(
+        name="reflowed-span-called-fabricated",
+        path="src/finder/extract/w3_mechanism.py",
+        old='    return "normalized" if normalize(span) in normalize(snapshot) else "absent"',
+        new='    return "absent"',
+        why="Providers re-wrap markdown constantly. Treating a whitespace difference "
+        "as fabrication throws away true fields and makes the extractor look broken.",
+        tests=("tests/test_w3.py",),
+    ),
+    Mutation(
+        name="empty-span-accepted",
+        path="src/finder/extract/w3_mechanism.py",
+        old="    if not span or not span.strip():",
+        new="    if False:",
+        why="An empty span passes a substring check against any page, so every field "
+        "would validate as supported by nothing at all.",
+        tests=("tests/test_w3.py",),
+    ),
+    Mutation(
+        name="model-supplies-its-own-provenance",
+        path="src/finder/extract/w3_mechanism.py",
+        old='            payload["evidence_url"] = snapshot.url',
+        new="            pass",
+        why="evidence_url is a fact the harness knows. Letting the model state it "
+        "invites it to state it wrongly, and every downstream audit follows that URL.",
+        tests=("tests/test_w3.py",),
+    ),
+    Mutation(
+        name="content-hash-not-pinned",
+        path="src/finder/extract/w3_mechanism.py",
+        old='            payload["content_hash"] = snapshot.content_hash',
+        new="            pass",
+        why="The content hash is what lets an extraction be replayed against the exact "
+        "bytes it saw. A model-supplied one points at nothing.",
+        tests=("tests/test_w3.py",),
+    ),
+    Mutation(
+        name="truncation-looks-like-a-bad-page",
+        path="src/finder/extract/w3_mechanism.py",
+        old="            if completion.truncated:",
+        new="            if False:",
+        why="Half a JSON object fails validation for a reason that has nothing to do "
+        "with the page, and gets quarantined as if the page were at fault.",
+        tests=("tests/test_w3.py",),
+    ),
+    Mutation(
+        name="prompt-loses-the-clauses",
+        path="src/finder/extract/w3_mechanism.py",
+        old='    return SYSTEM_PROMPT.format(clauses="\\n".join(f"- {c}" for c in PROMPT_CLAUSES))',
+        new='    return SYSTEM_PROMPT.format(clauses="")',
+        why="Each clause is a failure the predecessor made. Dropping them is how "
+        "inferred audiences and last year's closed calls come back.",
+        tests=("tests/test_w3.py",),
+    ),
+    Mutation(
+        name="prompt-version-frozen",
+        path="src/finder/extract/w3_mechanism.py",
+        old='PROMPT_VERSION = "w3-2026-09-02"',
+        new='PROMPT_VERSION = ""',
+        why="Without a version stamped on every extraction, a regression six weeks "
+        "from now is attributable to nothing.",
+        tests=("tests/test_w3.py",),
+    ),
+    Mutation(
+        name="channel-told-to-invent-an-intake",
+        path="src/finder/extract/w3_mechanism.py",
+        old='"and valuable — leave route_url not_stated rather than inventing one."',
+        new='"and valuable."',
+        why="The GaMEP case. A model that invents a route_url for a channel with no "
+        "published intake destroys the family the founder named as the goal.",
+        tests=("tests/test_w3.py",),
+    ),
+    Mutation(
+        name="room-not-told-the-form-is-off-domain",
+        path="src/finder/extract/w3_mechanism.py",
+        old='"application); it is often on a DIFFERENT domain from this page, and if the page "',
+        new='"application). "',
+        why="The GSAE case: the form is a SurveyMonkey link in body text, which is why "
+        "it could not be found by hand. Without this the extractor misses it too.",
+        tests=("tests/test_w3.py",),
+    ),
+    Mutation(
+        name="schema-not-sent-to-the-model",
+        path="src/finder/extract/w3_mechanism.py",
+        old="                system=system, prompt=text, schema=schema, max_tokens=self.max_tokens",
+        new="                system=system, prompt=text, max_tokens=self.max_tokens",
+        why="Without the schema as a hard constraint the model answers in whatever "
+        "shape it likes and every page burns two attempts before quarantine.",
+        tests=("tests/test_w3.py",),
+    ),
+    Mutation(
+        name="quarantine-not-counted",
+        path="src/finder/extract/w3_mechanism.py",
+        old='                run.record_not_reached("extraction_quarantined", outcome.summary())',
+        new="                pass",
+        why="A page the extractor could not read is not a page with nothing on it, and "
+        "the run report must not let the two look the same.",
+        tests=("tests/test_w3.py",),
+    ),
+    Mutation(
+        name="llm-temperature-freed",
+        path="src/finder/acquire/providers/llm.py",
+        old="        temperature: float = 0.0,",
+        new="        temperature: float = 1.0,",
+        why="This step reads what a page says. Creativity here is indistinguishable "
+        "from fabrication, and it also makes every extraction unrepeatable.",
+        tests=("tests/test_llm.py",),
+    ),
+    Mutation(
+        name="schema-suggested-not-forced",
+        path="src/finder/acquire/providers/llm.py",
+        old='            payload["tool_choice"] = {"type": "tool", "name": "record_extraction"}',
+        new="            pass",
+        why="A tool the model MAY use is a suggestion. Forcing it is what makes the "
+        "schema a constraint, and the difference is the retry rate.",
+        tests=("tests/test_llm.py",),
+    ),
+    Mutation(
+        name="prose-accepted-where-a-record-was-forced",
+        path="src/finder/acquire/providers/llm.py",
+        old='        if not forced_tool and block.get("type") == "text":',
+        new='        if block.get("type") == "text":',
+        why="Falling back to the text block when a tool was forced quietly takes an "
+        "explanation in place of the record that was required.",
+        tests=("tests/test_llm.py",),
+    ),
+    Mutation(
+        name="empty-model-answer-accepted",
+        path="src/finder/acquire/providers/llm.py",
+        old="        if not text:",
+        new="        if False:",
+        why="An empty extraction reads as 'the page states nothing' — a lie about a "
+        "call that failed, exactly like an empty fetch.",
+        tests=("tests/test_llm.py",),
+    ),
 ]
 
 
