@@ -1,8 +1,8 @@
 # CONTINUE HERE
 
-**Last updated:** 2026-09-02 · **26% of the plan by atomic step (89/340).** E0 complete ·
-E1.S1/S2/S3/S4 · E2.S1/S2/S5 · E3.S1/S2/S8 · E5.S1. 621 tests, 98% branch coverage,
-152/152 mutations caught.
+**Last updated:** 2026-09-02 · **36% of the plan by atomic step (121/340).** E0 complete ·
+E4 nearly complete · E1.S1/S2/S3/S4 · E2.S1/S2/S5/S7 · E3.S1/S2/S8 · E5.S1/S2.
+824 tests, 98% branch coverage, 202/202 mutations caught.
 
 If you are a new session or a new engineer, read this file, then `CLAUDE.md`, then run `bd ready`.
 That is the whole orientation.
@@ -13,13 +13,13 @@ That is the whole orientation.
 
 | | |
 |---|---|
-| **Done** | E0.S1 tooling and CI · E0.S2 config · E0.S3 secrets and redaction · E0.S4 run harness · E0.S5 cost ledger · E1.S1 schema · E1.S2 repositories · E1.S3 founder write guard · E1.S4 dedupe keys · E2.S1 fetch · E2.S2 snapshots · E2.S5 URL inventory · E3.S1 network registrar · E3.S2 route mapper · E3.S8 graph expansion · E5.S1 extraction contract |
+| **Done** | E0.S1 tooling and CI · E0.S2 config · E0.S3 secrets and redaction · E0.S4 run harness · E0.S5 cost ledger · E1.S1 schema · E1.S2 repositories · E1.S3 founder write guard · E1.S4 dedupe keys · E2.S1 fetch · E2.S2 snapshots · E2.S5 URL inventory · E3.S1 network registrar · E3.S2 route mapper · E3.S8 graph expansion · E2.S7 offline fixtures · E5.S1 extraction contract · E5.S2 **the extractor** · E4.S1/S2/S3/S4 **the whole precision gate** |
 | **Next** | `bd ready` → **E4.S1** (marker gate — the precision half), **E5.S2** (mechanism extractor — highest risk in the plan), **E3.S3** (W13 ChannelProspector) |
 | **Nothing is running** | No scheduled jobs, no data collected, no live database yet |
 
 ```bash
 make install
-make check      # lint + 621 tests, offline
+make check      # lint + 824 tests, offline
 make cov        # branch coverage, fails under 88%
 make audit      # breaks the code on purpose; every mutation must be caught
 bd ready
@@ -27,7 +27,7 @@ bd ready
 
 ## How this project judges its own tests
 
-`make audit` is not optional decoration. It runs in about four minutes and applies 152 specific
+`make audit` is not optional decoration. It runs in about four minutes and applies 202 specific
 mutations — each one a real bug a competent engineer could introduce — and fails if the suite does not notice. **A passing suite
 proves nothing; a suite that catches deliberate sabotage proves something.** CI runs it on every
 push alongside a branch-coverage floor.
