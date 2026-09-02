@@ -1435,6 +1435,51 @@ MUTATIONS: list[Mutation] = [
         "debugging it to entirely the wrong place.",
         tests=("tests/test_write_guard.py",),
     ),
+    # --- offline guarantee --------------------------------------------------
+    Mutation(
+        name="network-guard-disabled",
+        path="tests/conftest.py",
+        old='    monkeypatch.setattr(socket.socket, "connect", guarded_connect)',
+        new="    pass",
+        why="The suite could reach live providers again: slow, costly, and asserting "
+        "against whatever the web says this morning rather than against a fixture.",
+        tests=("tests/test_replay.py",),
+    ),
+    Mutation(
+        name="network-guard-lets-everything-through",
+        path="tests/conftest.py",
+        old='        if host in ("127.0.0.1", "::1", "localhost"):',
+        new="        if True:",
+        why="Exempting every host is the same as no guard, while still looking like one.",
+        tests=("tests/test_replay.py",),
+    ),
+    Mutation(
+        name="fixture-records-the-api-key",
+        path="src/finder/acquire/replay.py",
+        old='        "request": {',
+        new='        "request": {\n            "headers": dict(request.headers),',
+        why="Fixtures go into git. Recording request headers commits the API key with "
+        "them, and it stays in history after anyone notices.",
+        tests=("tests/test_replay.py",),
+    ),
+    Mutation(
+        name="fixture-miss-returns-404",
+        path="src/finder/acquire/replay.py",
+        old="            raise FixtureMissing(key, request, root)",
+        new="            return httpx.Response(404, request=request)",
+        why="A miss answered with 404 lets a test assert against a 'page not found' it "
+        "never meant to exercise — quiet wrongness rather than a loud gap.",
+        tests=("tests/test_replay.py",),
+    ),
+    Mutation(
+        name="fixture-key-ignores-the-body",
+        path="src/finder/acquire/replay.py",
+        old='    digest = hashlib.sha1(f"{method.upper()} {url}".encode() + b"\x1f" + body)',
+        new='    digest = hashlib.sha1(f"{method.upper()} {url}".encode())',
+        why="Two different requests to the same endpoint would share a recording, so a "
+        "stale fixture answers a question it was never asked.",
+        tests=("tests/test_replay.py",),
+    ),
 ]
 
 
