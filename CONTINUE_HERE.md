@@ -1,8 +1,8 @@
 # CONTINUE HERE
 
-**Last updated:** 2026-09-01 · **23% of the plan by atomic step (79/340).** E0 complete ·
-E1.S1/S2/S4 · E2.S1/S2/S5 · E3.S1/S8 · E5.S1. 540 tests, 98% branch coverage,
-125/125 mutations caught.
+**Last updated:** 2026-09-02 · **25% of the plan by atomic step (84/340).** E0 complete ·
+E1.S1/S2/S4 · E2.S1/S2/S5 · E3.S1/S2/S8 · E5.S1. 587 tests, 98% branch coverage,
+140/140 mutations caught.
 
 If you are a new session or a new engineer, read this file, then `CLAUDE.md`, then run `bd ready`.
 That is the whole orientation.
@@ -13,13 +13,13 @@ That is the whole orientation.
 
 | | |
 |---|---|
-| **Done** | E0.S1 tooling and CI · E0.S2 config · E0.S3 secrets and redaction · E0.S4 run harness · E0.S5 cost ledger · E1.S1 schema · E1.S2 repositories · E1.S4 dedupe keys · E2.S1 fetch · E2.S2 snapshots · E2.S5 URL inventory · E3.S1 network registrar · E3.S8 graph expansion · E5.S1 extraction contract |
-| **Next** | `bd ready` → **E3.S2** (W2 RouteMapper — first real route), **E5.S2** (mechanism extractor — highest risk in the plan), **E4.S1** (marker gate), **E1.S3** (founder write guard) |
+| **Done** | E0.S1 tooling and CI · E0.S2 config · E0.S3 secrets and redaction · E0.S4 run harness · E0.S5 cost ledger · E1.S1 schema · E1.S2 repositories · E1.S4 dedupe keys · E2.S1 fetch · E2.S2 snapshots · E2.S5 URL inventory · E3.S1 network registrar · E3.S2 route mapper · E3.S8 graph expansion · E5.S1 extraction contract |
+| **Next** | `bd ready` → **E4.S1** (marker gate — the precision half), **E5.S2** (mechanism extractor — highest risk in the plan), **E1.S3** (founder write guard), **E3.S3** (W13 ChannelProspector) |
 | **Nothing is running** | No scheduled jobs, no data collected, no live database yet |
 
 ```bash
 make install
-make check      # lint + 540 tests, offline
+make check      # lint + 587 tests, offline
 make cov        # branch coverage, fails under 88%
 make audit      # breaks the code on purpose; every mutation must be caught
 bd ready
@@ -27,7 +27,7 @@ bd ready
 
 ## How this project judges its own tests
 
-`make audit` is not optional decoration. It runs in about four minutes and applies 125 specific
+`make audit` is not optional decoration. It runs in about four minutes and applies 140 specific
 mutations — each one a real bug a competent engineer could introduce — and fails if the suite does not notice. **A passing suite
 proves nothing; a suite that catches deliberate sabotage proves something.** CI runs it on every
 push alongside a branch-coverage floor.
@@ -59,6 +59,8 @@ code moved out from under it — fix the mutation, do not delete it.
   belong to no network. The recall backbone.
 - `src/finder/harvest/expand.py` — follows partner, provider and member pages outward two hops,
   writing the span that named each organization. Indirect evidence of ACCESS.
+- `src/finder/harvest/w2_routes.py` — W2. One map call per due organization, emitting CANDIDATE
+  urls with the term that matched. Owns the tier arithmetic and the A/B/C cadence.
 - `src/finder/extract/schemas.py` — the extraction contract: the `Field` wrapper (value, span,
   source_url), the common schema, four family extensions, per-family `route_type` literals, and
   `extract_with_retry`, which retries once with the specific violations and then quarantines.
@@ -73,9 +75,9 @@ code moved out from under it — fix the mutation, do not delete it.
 
 ## What does not exist yet
 
-No live database, nothing scheduled, and no route has ever been written. W1 fills the registry
-with organizations and `acquire/` can map and fetch them, but nothing yet turns a fetched page
-into a candidate route. `harvest/`, `precision/`, `resolve/`, `score/`, `ask/`,
+No live database, nothing scheduled, and **no route has ever been written**. The system can now
+enumerate organizations, map them, and emit candidate URLs with reasons — but a candidate becomes
+a route only in extraction (E5.S2), which does not exist yet. `harvest/`, `precision/`, `resolve/`, `score/`, `ask/`,
 `output/`, `learn/` and `eval/` are still empty packages, and `extract/` holds the contract but
 not the extractor.
 
@@ -86,9 +88,9 @@ not the extractor.
    already exists in `src/finder/extract/schemas.py`; what is missing is the prompt, the snapshot
    handling, and the check that every span it returns actually appears in the snapshot. Build it
    against the three hand-verified routes below before anything else.
-2. **E3.S2 — W2 RouteMapper.** W1 now fills the registry with organizations; W2 is what turns one
-   of them into candidate ROOM routes by mapping its domain against `PROGRAMMING_PATHS`. Every
-   piece it needs already exists, which makes this the shortest path to a first real candidate.
+2. **E4.S1 — the marker co-occurrence gate.** W2 now produces candidates in volume; nothing yet
+   decides which are worth an expensive read. This is the precision half of the recall/precision
+   pair, and without it the extractor is pointed at everything.
 3. **E1.S3** — the founder-owned write guard. The schema already separates the tables; this adds
    the runtime assertion and the audit trail.
 
@@ -167,6 +169,16 @@ Milestone M1 is the thinnest slice that produces a real ranked list:
   constraint did its job; `NetworkRepo` is the fix.
 - **`https://intranet/members` is not an organization.** A host label with no dot resolved to a
   "domain" that nothing could ever fetch. Found by a test, not in production.
+
+- **`service`/`services` were missing from every path list.** The W2 acceptance criterion caught
+  it: nothing matched `gamep.org/services/workforce-development`, which is exactly where the GaMEP
+  CHANNEL route lives. W2 also matches PROGRAMMING_PATHS *and* PARTNER_PATHS against one map call
+  — the call is the cost, matching is free, and narrowing the terms only loses candidates.
+- **Tier is earned, not declared.** Founder PURSUE first, then the organization's BEST route FIT
+  from each route's latest score, then the network's tier last. Best rather than average: one
+  strong route is a reason to look weekly, and averaging it against four weak ones buries it.
+- **"Mapped, found nothing" and "could not be mapped" are different findings.** `map_detailed`
+  keeps them apart, so a 503 does not mark a domain looked-at and skip it for a month.
 
 ## Three routes already verified by hand
 
