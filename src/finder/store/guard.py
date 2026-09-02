@@ -113,7 +113,12 @@ def install(conn: sqlite3.Connection) -> None:
 
 
 def uninstall(conn: sqlite3.Connection) -> None:
-    """Remove the authorizer. Migrations need this; nothing else should."""
+    """Remove the authorizer.
+
+    Migrations do NOT need this — the guard governs INSERT, UPDATE and DELETE on
+    rows, and DDL is none of those. Nothing in the system calls it; it exists so
+    a maintenance script can be explicit rather than clever.
+    """
     conn.set_authorizer(None)
 
 

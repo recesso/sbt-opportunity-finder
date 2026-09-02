@@ -1435,15 +1435,6 @@ MUTATIONS: list[Mutation] = [
         "debugging it to entirely the wrong place.",
         tests=("tests/test_write_guard.py",),
     ),
-    Mutation(
-        name="migrations-blocked-by-the-guard",
-        path="src/finder/store/db.py",
-        old="            with guard.founder_write_allowed(), transaction(conn):",
-        new="            with transaction(conn):",
-        why="Schema changes are not founder writes. A guard that blocks its own tables "
-        "into existence is self-defeating — nothing would migrate at all.",
-        tests=("tests/test_write_guard.py", "tests/test_migrations.py"),
-    ),
 ]
 
 

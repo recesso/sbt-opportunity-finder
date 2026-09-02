@@ -326,7 +326,7 @@ def test_a_founder_mark_at_an_organization_promotes_it(store: Store) -> None:
 def test_retier_all_writes_only_what_changed(store: Store) -> None:
     store.networks.upsert(Network(network_id="n", name="N", tier="A"))
     promoted = org(store, "a.org", tier="C", network_id="n")
-    unchanged = org(store, "b.org", tier="C")
+    org(store, "b.org", tier="C")
 
     changed = mapper(store).retier_all()
 

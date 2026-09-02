@@ -158,8 +158,9 @@ def migrate(conn: sqlite3.Connection, directory: Path | None = None) -> list[int
             continue
         statements = split_statements(path.read_text(encoding="utf-8"))
         try:
-            # Schema changes are not founder writes. The guard governs rows.
-            with guard.founder_write_allowed(), transaction(conn):
+            # No guard exemption needed: the authorizer governs INSERT, UPDATE
+            # and DELETE on rows. CREATE TABLE is none of those.
+            with transaction(conn):
                 for statement in statements:
                     conn.execute(statement)
                 conn.execute(
