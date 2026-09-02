@@ -22,6 +22,7 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from typing import Any
 
+from finder.store import guard
 from finder.store.db import transaction, utcnow
 from finder.store.models import (
     Employer,
@@ -38,7 +39,9 @@ from finder.store.models import (
     Trigger,
 )
 
-FOUNDER_OWNED_TABLES: frozenset[str] = frozenset({"founder_mark", "person_founder"})
+# Re-exported from `guard`, which is where the enforcement lives. Kept here
+# because callers and tests have always looked for it at this name.
+FOUNDER_OWNED_TABLES = guard.FOUNDER_OWNED_TABLES
 
 
 class RepoError(Exception):
@@ -67,6 +70,14 @@ class _Repo:
             return self.conn.execute(sql, tuple(params))
         except sqlite3.IntegrityError as exc:
             raise RepoError(str(exc)) from exc
+        except sqlite3.DatabaseError as exc:
+            # The authorizer refuses with a bare "not authorized". Turn it into
+            # an error that names the table and records the attempt.
+            table = guard.table_in_statement(sql) if "not authorized" in str(exc) else None
+            if table is None:
+                raise
+            guard.refused(self.conn, table, guard.operation_in_statement(sql), detail=str(exc))
+            raise  # pragma: no cover - guard.refused always raises
 
     def _one(self, sql: str, params: Sequence[Any] = ()) -> sqlite3.Row | None:
         return self.conn.execute(sql, tuple(params)).fetchone()
@@ -718,7 +729,15 @@ class MarkRepo(_Repo):
     """
 
     def ingest(self, mark: FounderMark) -> FounderMark:
-        """Insert a mark. An existing (route_id, marked_at) is left untouched."""
+        """Insert a mark. An existing (route_id, marked_at) is left untouched.
+
+        The ONE sanctioned founder write path. Everything else — including raw
+        SQL — is refused by the authorizer installed on the connection.
+        """
+        with guard.founder_write_allowed():
+            return self._ingest(mark)
+
+    def _ingest(self, mark: FounderMark) -> FounderMark:
         self._exec(
             "INSERT INTO founder_mark (mark_id, route_id, marked_at, verdict,"
             " target_verdict, note_freetext, outcome, knows_someone)"
@@ -741,6 +760,14 @@ class MarkRepo(_Repo):
         )
         if row is None:  # pragma: no cover
             raise RepoError(f"mark for {mark.route_id} did not persist")
+        guard.record_attempt(
+            self.conn,
+            "founder_mark",
+            "INSERT",
+            allowed=True,
+            caller=guard.caller_of_record(),
+            detail=f"route={mark.route_id} marked_at={mark.marked_at}",
+        )
         return self._row(row)
 
     def for_route(self, route_id: str) -> list[FounderMark]:

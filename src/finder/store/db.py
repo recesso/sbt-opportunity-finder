@@ -23,6 +23,8 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+from finder.store import guard
+
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 MIGRATION_PATTERN = re.compile(r"^(\d{3})_[a-z0-9_]+\.sql$")
 
@@ -41,7 +43,12 @@ def connect(path: Path | str = ":memory:") -> sqlite3.Connection:
     if path != ":memory:":
         Path(path).parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(str(path), isolation_level=None)  # explicit transactions
+    # cached_statements=0 is load-bearing, not a tuning choice. SQLite runs the
+    # authorizer when a statement is PREPARED, and Python's sqlite3 reuses
+    # prepared statements for identical SQL — so with the cache on, the second
+    # identical write to a founder-owned table skips the guard entirely. Found
+    # by tests/test_write_guard.py, which is exactly what it is for.
+    conn = sqlite3.connect(str(path), isolation_level=None, cached_statements=0)
     conn.row_factory = sqlite3.Row
 
     conn.execute("PRAGMA foreign_keys = ON")
@@ -49,6 +56,10 @@ def connect(path: Path | str = ":memory:") -> sqlite3.Connection:
     if path != ":memory:":
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
+
+    # Installed here rather than in the repository layer so that raw SQL run by
+    # a future worker against this connection is refused identically.
+    guard.install(conn)
     return conn
 
 
@@ -147,7 +158,8 @@ def migrate(conn: sqlite3.Connection, directory: Path | None = None) -> list[int
             continue
         statements = split_statements(path.read_text(encoding="utf-8"))
         try:
-            with transaction(conn):
+            # Schema changes are not founder writes. The guard governs rows.
+            with guard.founder_write_allowed(), transaction(conn):
                 for statement in statements:
                     conn.execute(statement)
                 conn.execute(

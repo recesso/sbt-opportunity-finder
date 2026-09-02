@@ -1324,6 +1324,126 @@ MUTATIONS: list[Mutation] = [
         "caller that cannot tell them apart will mark the unreachable one done.",
         tests=("tests/test_w2.py", "tests/test_map.py"),
     ),
+    # --- founder write guard ------------------------------------------------
+    Mutation(
+        name="guard-not-installed",
+        path="src/finder/store/db.py",
+        old="    guard.install(conn)",
+        new="    pass",
+        why="Every connection would be unguarded. This is the defence that survives a "
+        "refactor, and the predecessor lost the founder's decisions without it.",
+        tests=("tests/test_write_guard.py",),
+    ),
+    Mutation(
+        name="statement-cache-defeats-the-guard",
+        path="src/finder/store/db.py",
+        old="    conn = sqlite3.connect(str(path), isolation_level=None, cached_statements=0)",
+        new="    conn = sqlite3.connect(str(path), isolation_level=None)",
+        why="SQLite runs the authorizer at PREPARE time and Python reuses prepared "
+        "statements, so with the cache on the SECOND identical write to a founder "
+        "table skips the guard entirely. A guard that protects only the first row.",
+        tests=("tests/test_write_guard.py",),
+    ),
+    Mutation(
+        name="guard-permits-everything",
+        path="src/finder/store/guard.py",
+        old="        return sqlite3.SQLITE_OK if is_allowed() else sqlite3.SQLITE_DENY",
+        new="        return sqlite3.SQLITE_OK",
+        why="The authorizer would wave through every worker write to the founder's "
+        "decisions, which is precisely the predecessor's failure.",
+        tests=("tests/test_write_guard.py",),
+    ),
+    Mutation(
+        name="guard-blocks-reads-too",
+        path="src/finder/store/guard.py",
+        old="        if operation is None or arg1 not in FOUNDER_OWNED_TABLES:",
+        new="        if arg1 not in FOUNDER_OWNED_TABLES:",
+        why="His marks are the training set. A guard that blocks reading them breaks "
+        "every downstream consumer while protecting nothing.",
+        tests=("tests/test_write_guard.py",),
+    ),
+    Mutation(
+        name="guard-blocks-every-table",
+        path="src/finder/store/guard.py",
+        old='frozenset({"founder_mark", "person_founder"})',
+        new='frozenset({"founder_mark"})',
+        why="person_founder holds who he knows. Dropping it from the registry leaves "
+        "half the founder-owned data unguarded.",
+        tests=("tests/test_write_guard.py", "tests/test_repos.py"),
+    ),
+    Mutation(
+        name="permission-leaks-past-the-block",
+        path="src/finder/store/guard.py",
+        old="        _ALLOWED.reset(token)",
+        new="        pass",
+        why="Once any sanctioned ingest ran, every later worker write would be "
+        "permitted for the rest of the process.",
+        tests=("tests/test_write_guard.py",),
+    ),
+    Mutation(
+        name="violation-not-audited",
+        path="src/finder/store/guard.py",
+        old="    record_attempt(conn, table, operation, allowed=False,"
+        " caller=caller, detail=detail)",
+        new="    pass",
+        why="A P0 defect with no record of who did it or when cannot be traced back to "
+        "the code that caused it.",
+        tests=("tests/test_write_guard.py",),
+    ),
+    Mutation(
+        name="sanctioned-write-not-audited",
+        path="src/finder/store/repos.py",
+        old='            "founder_mark",\n            "INSERT",\n            allowed=True,',
+        new='            "founder_mark",\n            "INSERT",\n            allowed=False,',
+        why="A trail that mislabels the sanctioned path as a violation is worse than "
+        "none: it cries wolf on the one write that was supposed to happen.",
+        tests=("tests/test_write_guard.py",),
+    ),
+    Mutation(
+        name="violation-logged-below-error",
+        path="src/finder/store/guard.py",
+        old='    _log.error(\n        "founder_write_refused"',
+        new='    _log.debug(\n        "founder_write_refused"',
+        why="A P0 defect at debug level is invisible in production.",
+        tests=("tests/test_write_guard.py",),
+    ),
+    Mutation(
+        name="caller-of-record-blames-the-guard",
+        path="src/finder/store/guard.py",
+        old='if "finder\\\\store" not in frame.filename',
+        new="if False",
+        why="Naming the repository line reports the guard rail rather than the code "
+        "that drove into it, which is useless for finding the offending worker.",
+        tests=("tests/test_write_guard.py",),
+    ),
+    Mutation(
+        name="audit-failure-masks-the-violation",
+        path="src/finder/store/guard.py",
+        old="    except sqlite3.Error as exc:  # pragma: no cover - the table exists after 004",
+        new="    except KeyboardInterrupt as exc:",
+        why="Losing the audit record is bad; letting a lost record turn the refusal "
+        "into a different exception, so the write looks merely broken rather than "
+        "forbidden, is worse.",
+        tests=("tests/test_write_guard.py",),
+    ),
+    Mutation(
+        name="non-refusal-errors-relabelled",
+        path="src/finder/store/repos.py",
+        old='if "not authorized" in str(exc) else None',
+        new="else None",
+        why="A real database fault reported as a permission problem sends whoever is "
+        "debugging it to entirely the wrong place.",
+        tests=("tests/test_write_guard.py",),
+    ),
+    Mutation(
+        name="migrations-blocked-by-the-guard",
+        path="src/finder/store/db.py",
+        old="            with guard.founder_write_allowed(), transaction(conn):",
+        new="            with transaction(conn):",
+        why="Schema changes are not founder writes. A guard that blocks its own tables "
+        "into existence is self-defeating — nothing would migrate at all.",
+        tests=("tests/test_write_guard.py", "tests/test_migrations.py"),
+    ),
 ]
 
 

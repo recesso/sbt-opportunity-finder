@@ -22,6 +22,7 @@ from finder.store.db import (
     table_names,
     utcnow,
 )
+from finder.store.guard import founder_write_allowed
 
 EXPECTED_TABLES = {
     "network",
@@ -237,18 +238,25 @@ def test_rejection_needs_something_to_match_on(db: sqlite3.Connection) -> None:
 
 
 def test_founder_mark_cannot_be_duplicated(db: sqlite3.Connection) -> None:
+    """The schema's own UNIQUE constraint, exercised at the SQL level.
+
+    Wrapped in `founder_write_allowed` because the connection now refuses
+    founder-owned writes outright (E1.S3). A test reaching past the repository
+    layer has to say so, which is the point.
+    """
     _org(db)
     _route(db, org_id="org-1")
     stamp = utcnow()
-    db.execute(
-        "INSERT INTO founder_mark (mark_id, route_id, marked_at, verdict) VALUES (?,?,?,?)",
-        ("m-1", "rt-1", stamp, "GOOD"),
-    )
-    with pytest.raises(sqlite3.IntegrityError):
+    with founder_write_allowed():
         db.execute(
             "INSERT INTO founder_mark (mark_id, route_id, marked_at, verdict) VALUES (?,?,?,?)",
-            ("m-2", "rt-1", stamp, "BAD"),
+            ("m-1", "rt-1", stamp, "GOOD"),
         )
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute(
+                "INSERT INTO founder_mark (mark_id, route_id, marked_at, verdict) VALUES (?,?,?,?)",
+                ("m-2", "rt-1", stamp, "BAD"),
+            )
 
 
 def test_founder_data_lives_in_its_own_tables(db: sqlite3.Connection) -> None:
