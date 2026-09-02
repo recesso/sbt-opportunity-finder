@@ -7,6 +7,13 @@
 version: 1
 min_classes: 2
 
+# At least one of these must be among the classes hit. D (format) and E (access)
+# describe the SHAPE of a page; A, B and C establish that it is about the right
+# subject or the right people. A page with only shape — "call for presentations"
+# plus "hands-on clinic" — is every conference on earth, and it is exactly how
+# the woodworking expo survived a broad search on 2026-09-01.
+require_classes: [A, B, C]
+
 classes:
   A_subject_core:
     - time-to-competency

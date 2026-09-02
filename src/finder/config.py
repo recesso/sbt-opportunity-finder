@@ -224,6 +224,7 @@ class WeightsConfig(_Base):
 class LexiconConfig(_Base):
     version: int
     min_classes: int = Field(ge=1)
+    require_classes: list[str] = []
     classes: dict[str, list[str]]
     strong_combinations: list[str]
     trace_phrasings: list[str]
@@ -235,6 +236,12 @@ class LexiconConfig(_Base):
             raise ValueError(
                 f"lexicon.yaml: min_classes={self.min_classes} exceeds the "
                 f"{len(self.classes)} classes defined"
+            )
+        unknown_required = {r.upper() for r in self.require_classes} - letters
+        if unknown_required:
+            raise ValueError(
+                f"lexicon.yaml: require_classes references unknown class letters "
+                f"{sorted(unknown_required)}"
             )
         for combo in self.strong_combinations:
             unknown = {c for c in combo.upper()} - letters

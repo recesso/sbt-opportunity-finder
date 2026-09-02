@@ -265,3 +265,33 @@ def test_unknown_family_accessor_raises() -> None:
 def test_unknown_route_type_accessor_raises() -> None:
     with pytest.raises(ConfigError, match="unknown route_type"):
         load_config().route_base("ROOM", "TELEPATHY")
+
+
+def test_require_classes_must_name_real_classes(tmp_path) -> None:
+    """A typo in require_classes would silently drop every candidate, because no
+    page can hit a class that does not exist."""
+    import pytest
+
+    from finder.config import LexiconConfig
+
+    base = {
+        "version": 1,
+        "min_classes": 2,
+        "classes": {"A_x": ["alpha"], "N_negative": ["bad"]},
+        "strong_combinations": [],
+        "trace_phrasings": [],
+    }
+    assert LexiconConfig(**base | {"require_classes": ["A"]}).require_classes == ["A"]
+    with pytest.raises(ValueError, match="unknown class letters"):
+        LexiconConfig(**base | {"require_classes": ["Z"]})
+
+
+def test_the_shipped_lexicon_requires_a_relevance_class() -> None:
+    """Shape without relevance is every conference on earth. The shipped config
+    has to actually carry the rule, not just support it."""
+    import yaml
+
+    from finder.config import LexiconConfig
+
+    raw = yaml.safe_load((DEFAULT_CONFIG_DIR / "lexicon.yaml").read_text(encoding="utf-8"))
+    assert set(LexiconConfig(**raw).require_classes) == {"A", "B", "C"}

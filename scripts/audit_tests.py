@@ -1636,6 +1636,89 @@ MUTATIONS: list[Mutation] = [
         "call that failed, exactly like an empty fetch.",
         tests=("tests/test_llm.py",),
     ),
+    # --- the marker gate ----------------------------------------------------
+    Mutation(
+        name="gate-accepts-one-class",
+        path="src/finder/precision/lexicon.py",
+        old="        if len(classes_hit) < self.min_classes:",
+        new="        if False:",
+        why="Co-occurrence IS the precision. One class is not evidence, and without "
+        "this the EMS conference comes back — it has a real call for speakers on it.",
+        tests=("tests/test_gate.py",),
+    ),
+    Mutation(
+        name="gate-accepts-shape-without-relevance",
+        path="src/finder/precision/lexicon.py",
+        old="        if self.require_classes and not set(combo) & set(self.require_classes):",
+        new="        if False:",
+        why="A format plus a way in describes every conference on earth. This is how "
+        "the woodworking expo survived a broad search.",
+        tests=("tests/test_gate.py",),
+    ),
+    Mutation(
+        name="gate-ignores-negatives",
+        path="src/finder/precision/lexicon.py",
+        old="        if negatives > positives:",
+        new="        if False:",
+        why="Career fairs and SHRM chapters flood back in. The predecessor filled up "
+        "with exactly these.",
+        tests=("tests/test_gate.py",),
+    ),
+    Mutation(
+        name="negatives-counted-by-presence-not-density",
+        path="src/finder/precision/lexicon.py",
+        old="        negatives = occurrences(text, self.negative)",
+        new="        negatives = len(count_matches(text, self.negative))",
+        why="A page saying 'career fair' three times is more about career fairs than "
+        "one saying it once. Distinct-term counting calls those the same page.",
+        tests=("tests/test_gate.py",),
+    ),
+    Mutation(
+        name="plural-markers-missed",
+        path="src/finder/precision/lexicon.py",
+        old='    return f" {term} " in normalized_text or f" {term}s " in normalized_text',
+        new='    return f" {term} " in normalized_text',
+        why="Real pages say 'Plant Managers'. Missing the plural of the audience marker "
+        "is a recall bug in the class that decides everything.",
+        tests=("tests/test_gate.py",),
+    ),
+    Mutation(
+        name="marker-fires-inside-any-word",
+        path="src/finder/precision/lexicon.py",
+        old='    return f" {term} " in normalized_text or f" {term}s " in normalized_text',
+        new="    return term in normalized_text",
+        why="'council' would fire on 'councilman' and every civic page becomes a council "
+        "seat — the same bug the URL matcher had.",
+        tests=("tests/test_gate.py",),
+    ),
+    Mutation(
+        name="gate-drops-without-a-reason",
+        path="src/finder/precision/lexicon.py",
+        old="                reason=REASON_INSUFFICIENT,",
+        new='                reason="",',
+        why="A gate that drops pages without saying why cannot be tuned, and a recall "
+        "problem inside it would be invisible.",
+        tests=("tests/test_gate.py",),
+    ),
+    Mutation(
+        name="punctuation-hides-markers",
+        path="src/finder/precision/lexicon.py",
+        old='    flattened = _SEPARATORS.sub(" ", text.casefold())',
+        new="    flattened = text.casefold()",
+        why="Real markup is hyphens and asterisks. 'Call-for-Speakers' would stop "
+        "matching the single most important access marker there is.",
+        tests=("tests/test_gate.py",),
+    ),
+    Mutation(
+        name="combo-not-reported",
+        path="src/finder/precision/lexicon.py",
+        old='        combo = "".join(sorted({class_letter(n) for n in classes_hit}))',
+        new='        combo = ""',
+        why="The combo is a reranker feature. CE — employer audience plus a published "
+        "way in — is the strongest thing this cheap layer can say, and losing it "
+        "throws that signal away.",
+        tests=("tests/test_gate.py",),
+    ),
 ]
 
 

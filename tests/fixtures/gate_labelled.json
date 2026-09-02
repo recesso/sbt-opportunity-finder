@@ -1,0 +1,77 @@
+{
+  "_README": [
+    "Labelled pages for the marker co-occurrence gate.",
+    "",
+    "The first two are the ones that matter. `ems_conference` is the false",
+    "positive observed by hand on 2026-09-01: a broad 'call for speakers' search",
+    "returned it, and it is the reason the gate exists. `eta_call` is the true",
+    "positive from the same search — the one Art actually submitted to.",
+    "",
+    "Text is representative, hand-written, and not copied from any site.",
+    "",
+    "`expect.passed` is the label. `expect.combo` is asserted only where the",
+    "combination is the point of the case."
+  ],
+  "pages": [
+    {
+      "id": "ems_conference",
+      "note": "THE FALSE POSITIVE. Hits class E and nothing in class C. This page is why the gate exists.",
+      "text": "Annual EMS Conference. Call for speakers is now open. Submit a proposal for our clinical education tracks. Continuing education credit for nurses and paramedics available. Registration includes access to skills labs.",
+      "expect": { "passed": false, "reason": "insufficient_class_coverage" }
+    },
+    {
+      "id": "eta_call",
+      "note": "THE TRUE POSITIVE from the same search. The one Art submitted to.",
+      "text": "AI Week is accepting proposals. Call for speakers open to trainers and practitioners. Sessions are for plant managers, VP of operations and business owners working on automation readiness and workforce capability. Formats include workshop and roundtable.",
+      "expect": { "passed": true, "combo_contains": ["C", "E"] }
+    },
+    {
+      "id": "woodworking_expo",
+      "note": "The other false positive. Hits FORMAT and ACCESS and nothing else: a format plus a way in is every conference on earth.",
+      "text": "Woodworking Expo. Call for presentations from craftspeople. Demonstrations, tool showcases and a hands-on finishing clinic.",
+      "expect": { "passed": false, "reason": "shape_without_relevance" }
+    },
+    {
+      "id": "gamep_channel",
+      "note": "A CHANNEL page: the family named as the goal. Provider access plus employer audience.",
+      "text": "We work on site with manufacturers to close the skills gap and shorten time-to-competency. Become a provider to deliver inside member companies. Our approved provider network reaches plant managers and general managers across the state.",
+      "expect": { "passed": true }
+    },
+    {
+      "id": "chamber_council",
+      "note": "A council seat. Employer audience plus a format, no explicit call for speakers.",
+      "text": "The Manufacturing Council meets monthly. Council meeting agendas are set by member companies. Attendees are plant managers and business owners. Sessions are facilitated and include a deep dive on operational excellence.",
+      "expect": { "passed": true }
+    },
+    {
+      "id": "career_fair",
+      "note": "NEGATIVE DOMINANT. Mentions upskilling once, and is a recruiting event.",
+      "text": "Spring Career Fair. Job seekers welcome. Resume workshop and recruiting event for our student chapter. Staffing agency partners and talent acquisition teams will be present. One session covers upskilling.",
+      "expect": { "passed": false, "reason": "negative_dominant" }
+    },
+    {
+      "id": "shrm_chapter",
+      "note": "An HR audience, not an operations one. The predecessor filled up with these.",
+      "text": "Our SHRM chapter meeting covers talent acquisition trends. Continuing education credit for nurses is not offered. A workshop on onboarding will be facilitated by a staffing agency partner.",
+      "expect": { "passed": false, "reason": "negative_dominant" }
+    },
+    {
+      "id": "subject_only",
+      "note": "Class A alone. Real subject matter, no audience and no way in. One class is not evidence.",
+      "text": "A white paper on time-to-competency and expertise retention in industrial settings, covering knowledge transfer and succession planning for expertise.",
+      "expect": { "passed": false, "reason": "insufficient_class_coverage" }
+    },
+    {
+      "id": "empty_page",
+      "note": "A page that says nothing. Must be dropped for the stated reason, not crash.",
+      "text": "",
+      "expect": { "passed": false, "reason": "insufficient_class_coverage" }
+    },
+    {
+      "id": "punctuated_markers",
+      "note": "Real markup: hyphens, capitals and punctuation around the same phrases.",
+      "text": "## Call-for-Speakers!\n\nAudience: *Plant Managers*, VP-of-Operations, and Business Owners.\nTopic: Time-to-Competency.",
+      "expect": { "passed": true, "combo_contains": ["A", "C", "E"] }
+    }
+  ]
+}
