@@ -195,6 +195,20 @@ def test_a_miss_raises_with_the_command_to_record_it(fixtures: Path) -> None:
     assert "never a 404 to assert against" in message
 
 
+def test_a_different_request_body_does_not_reuse_a_recording(fixtures: Path) -> None:
+    """Two scrapes of different URLs hit the same endpoint. If the body were not
+    in the key they would share a recording, and the second would silently
+    receive an answer to a question it never asked."""
+    endpoint = "https://api.firecrawl.dev/v2/scrape"
+    recorded = a_request(endpoint, json={"url": "https://gsae.org/"})
+    replay.save(fixtures, recorded, httpx.Response(200, text="gsae", request=recorded))
+
+    with replay.replay_client(fixtures) as client:
+        assert client.post(endpoint, json={"url": "https://gsae.org/"}).text == "gsae"
+        with pytest.raises(replay.FixtureMissing):
+            client.post(endpoint, json={"url": "https://gamep.org/"})
+
+
 def test_a_recorded_error_response_replays_as_that_error(fixtures: Path) -> None:
     """A recorded 429 is a real recording of how the provider behaves, and the
     retry path deserves to be tested against it."""
