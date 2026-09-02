@@ -228,11 +228,21 @@ def test_a_very_long_page_is_truncated_not_refused() -> None:
 
 
 def test_the_prompt_version_is_stamped_on_every_result() -> None:
-    """A regression six weeks from now has to be attributable to a prompt."""
+    """A regression six weeks from now has to be attributable to a prompt.
+
+    Asserting only `result.prompt_version == PROMPT_VERSION` would be a
+    tautology — it compares the value to the constant it came from and passes
+    happily when that constant is blank. So the version itself is checked.
+    """
+    assert PROMPT_VERSION.strip(), "an unversioned prompt is attributable to nothing"
+    assert PROMPT_VERSION.startswith("w3-"), "the version names the worker it belongs to"
+    assert len(PROMPT_VERSION) >= 8, "and carries a date, so two prompts can be ordered"
+
     spec = page("open_call")
     llm = ScriptedLLM(room_answer(spec["markdown"], spec["url"]))
     result = extractor(llm).extract("ROOM", snapshot_of(spec))
     assert result.prompt_version == PROMPT_VERSION
+    assert result.as_dict()["prompt_version"] == PROMPT_VERSION
     assert result.model == "scripted-1"
 
 
