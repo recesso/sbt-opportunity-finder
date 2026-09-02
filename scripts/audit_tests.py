@@ -1084,6 +1084,117 @@ MUTATIONS: list[Mutation] = [
         "twice and counted twice.",
         tests=("tests/test_w1.py",),
     ),
+    # --- graph expansion ----------------------------------------------------
+    Mutation(
+        name="expansion-loses-the-span",
+        path="src/finder/harvest/expand.py",
+        old="                span_text=edge.span,",
+        new="                span_text=None,",
+        why="Indirect evidence of ACCESS is the whole point of following these edges. "
+        "An organization with no span supporting its discovery is indistinguishable "
+        "from one somebody typed in.",
+        tests=("tests/test_expand.py",),
+    ),
+    Mutation(
+        name="expansion-loses-who-vouched",
+        path="src/finder/harvest/expand.py",
+        old="                value=edge.from_domain,",
+        new="                value=None,",
+        why="'GaMEP names this body as an approved provider' is the fact. Without the "
+        "vouching organization the evidence row says nothing useful.",
+        tests=("tests/test_expand.py",),
+    ),
+    Mutation(
+        name="expansion-depth-unbounded",
+        path="src/finder/harvest/expand.py",
+        old="        if max_depth > MAX_DEPTH:",
+        new="        if False:",
+        why="Beyond two hops this is a crawl of the open web wearing a different name, "
+        "and the run never ends.",
+        tests=("tests/test_expand.py",),
+    ),
+    Mutation(
+        name="expansion-cycles-forever",
+        path="src/finder/harvest/expand.py",
+        old="                    if edge.to_domain in result.visited:",
+        new="                    if False:",
+        why="Partner pages link back constantly. Without a visited set the traversal "
+        "walks A to B to A until the process dies.",
+        tests=("tests/test_expand.py",),
+    ),
+    Mutation(
+        name="expansion-follows-self-links",
+        path="src/finder/harvest/expand.py",
+        old="            if to_domain == from_domain:",
+        new="            if False:",
+        why="Every page links to its own site. Treating that as an edge makes each "
+        "organization a partner of itself.",
+        tests=("tests/test_expand.py",),
+    ),
+    Mutation(
+        name="expansion-registers-duplicates-per-page",
+        path="src/finder/harvest/expand.py",
+        old="            if to_domain in seen_here:",
+        new="            if False:",
+        why="A partner listed by full name and again by abbreviation becomes two edges "
+        "and two evidence rows for one relationship.",
+        tests=("tests/test_expand.py",),
+    ),
+    Mutation(
+        name="expansion-rewrites-known-organizations",
+        path="src/finder/harvest/expand.py",
+        old="        if self.store.organizations.get_by_domain(edge.to_domain) is not None:",
+        new="        if False:",
+        why="A partner-page mention would overwrite a tier A network node's tier and "
+        "first_seen with a passing reference.",
+        tests=("tests/test_expand.py",),
+    ),
+    Mutation(
+        name="expansion-ignores-standing-rejections",
+        path="src/finder/harvest/expand.py",
+        old="        if self.store.rejections.blocks(",
+        new="        if False and self.store.rejections.blocks(",
+        why="A rejected organization would return through somebody else's partner page, "
+        "which is exactly how the predecessor kept resurrecting them.",
+        tests=("tests/test_expand.py",),
+    ),
+    Mutation(
+        name="rejected-organization-still-walked",
+        path="src/finder/harvest/expand.py",
+        old="            result.rejected += 1\n            return False",
+        new="            result.rejected += 1\n            return True",
+        why="Walking outward from a rejected organization spends the budget on exactly "
+        "the branch the founder said not to look at.",
+        tests=("tests/test_expand.py",),
+    ),
+    Mutation(
+        name="expansion-pages-per-org-unbounded",
+        path="src/finder/harvest/expand.py",
+        old="[: self.pages_per_org]",
+        new="[:]",
+        why="Forty matching pages on one domain is a site map, not forty partner lists, "
+        "and fetching all of them multiplies the bill by the size of the site.",
+        tests=("tests/test_expand.py",),
+    ),
+    Mutation(
+        name="unreachable-partner-page-silent",
+        path="src/finder/harvest/expand.py",
+        old='                run.record_not_reached("partner_page_unreachable"',
+        new='                run.log.debug("partner_page_unreachable"',
+        why="A partner page that 503'd is not a page with no partners on it.",
+        tests=("tests/test_expand.py",),
+    ),
+    Mutation(
+        name="expanded-org-claims-a-tier",
+        path="src/finder/harvest/expand.py",
+        old='                tier="C",\n'
+        '                discovered_from=f"partner:{edge.source_url}",',
+        new='                tier="A",\n'
+        '                discovered_from=f"partner:{edge.source_url}",',
+        why="Being named on somebody's partner page is not a network tier. Claiming one "
+        "makes a passing mention outrank a verified directory entry.",
+        tests=("tests/test_expand.py",),
+    ),
 ]
 
 

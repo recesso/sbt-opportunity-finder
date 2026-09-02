@@ -504,6 +504,19 @@ class EvidenceRepo(_Repo):
             prompt_version=row["prompt_version"],
         )
 
+    def for_organization(self, org_id: str) -> list[Evidence]:
+        """Claims recorded against an organization rather than a route.
+
+        Graph expansion writes here: "GaMEP names this body as an approved
+        provider" is a fact about the organization, established before any route
+        at it exists.
+        """
+        rows = self._all(
+            "SELECT ev_id FROM evidence WHERE org_id = ? ORDER BY field_name, source_url",
+            (org_id,),
+        )
+        return [e for r in rows if (e := self.get(r["ev_id"]))]
+
     def for_route(self, route_id: str) -> list[Evidence]:
         rows = self._all("SELECT ev_id FROM evidence WHERE route_id = ?", (route_id,))
         return [e for r in rows if (e := self.get(r["ev_id"]))]
