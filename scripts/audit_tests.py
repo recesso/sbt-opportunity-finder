@@ -1474,8 +1474,8 @@ MUTATIONS: list[Mutation] = [
     Mutation(
         name="fixture-key-ignores-the-body",
         path="src/finder/acquire/replay.py",
-        old='    digest = hashlib.sha1(f"{method.upper()} {url}".encode() + b"\x1f" + body)',
-        new='    digest = hashlib.sha1(f"{method.upper()} {url}".encode())',
+        old="    return fixture_key(request.method, str(request.url), request.content)",
+        new="    return fixture_key(request.method, str(request.url))",
         why="Two different requests to the same endpoint would share a recording, so a "
         "stale fixture answers a question it was never asked.",
         tests=("tests/test_replay.py",),
