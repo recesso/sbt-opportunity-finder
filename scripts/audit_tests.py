@@ -1186,6 +1186,144 @@ MUTATIONS: list[Mutation] = [
         "makes a passing mention outrank a verified directory entry.",
         tests=("tests/test_expand.py",),
     ),
+    # --- W2 route mapping ---------------------------------------------------
+    Mutation(
+        name="founder-verdict-outranked-by-score",
+        path="src/finder/harvest/w2_routes.py",
+        old="    if any(v.strip().upper() in PURSUE_VERDICTS for v in verdicts):",
+        new="    if False:",
+        why="His judgment is the ground truth the scores approximate. A PURSUE that "
+        "does not promote means the system stops looking at the very organizations "
+        "he told it to pursue.",
+        tests=("tests/test_w2.py",),
+    ),
+    Mutation(
+        name="network-prior-outranks-the-score",
+        path="src/finder/harvest/w2_routes.py",
+        old="    if best_fit is not None:",
+        new="    if False:",
+        why="Belonging to a strong network is a prior, not a result. Letting it hold an "
+        "organization at tier A after its own routes score badly spends the weekly "
+        "budget on the ones already known to be weak.",
+        tests=("tests/test_w2.py",),
+    ),
+    Mutation(
+        name="tier-bands-shifted",
+        path="src/finder/harvest/w2_routes.py",
+        old="TIER_A_FIT = 65",
+        new="TIER_A_FIT = 50",
+        why="The A band is the BEST list's bar on purpose. Widening it puts every "
+        "middling organization on a weekly cadence and the budget goes to noise.",
+        tests=("tests/test_w2.py",),
+    ),
+    Mutation(
+        name="best-fit-becomes-worst-fit",
+        path="src/finder/store/repos.py",
+        old='            "SELECT MAX(s.fit) AS best FROM score s"',
+        new='            "SELECT MIN(s.fit) AS best FROM score s"',
+        why="One strong route is a reason to look at an organization weekly. Taking "
+        "the weakest buries it behind four bad ones, the same error as averaging.",
+        tests=("tests/test_w2.py", "tests/test_repos.py"),
+    ),
+    Mutation(
+        name="stale-score-treated-as-current",
+        path="src/finder/store/repos.py",
+        old='"     SELECT MAX(s2.scored_at) FROM score s2 WHERE s2.route_id = s.route_id)"',
+        new='"     SELECT MIN(s2.scored_at) FROM score s2 WHERE s2.route_id = s.route_id)"',
+        why="A route that scored 90 last month and 20 today is a 20. Reading the "
+        "oldest score keeps a dead opportunity on the weekly list forever.",
+        tests=("tests/test_w2.py", "tests/test_repos.py"),
+    ),
+    Mutation(
+        name="cadence-ignored",
+        path="src/finder/harvest/w2_routes.py",
+        old="    return datetime.fromisoformat(last_mapped) <= cutoff",
+        new="    return True",
+        why="Every organization becomes due every run, which multiplies the map bill by "
+        "the size of the registry.",
+        tests=("tests/test_w2.py",),
+    ),
+    Mutation(
+        name="never-mapped-not-due",
+        path="src/finder/harvest/w2_routes.py",
+        old="    if not last_mapped:\n        return True",
+        new="    if not last_mapped:\n        return False",
+        why="An organization nobody has ever looked at would never be looked at.",
+        tests=("tests/test_w2.py",),
+    ),
+    Mutation(
+        name="unknown-tier-gets-the-fastest-cadence",
+        path="src/finder/harvest/w2_routes.py",
+        old='    days = CADENCE_DAYS.get(tier, CADENCE_DAYS["C"])',
+        new='    days = CADENCE_DAYS.get(tier, CADENCE_DAYS["A"])',
+        why="Failing OPEN on an undefined tier spends the weekly budget on rows nobody "
+        "classified. Failing to the slowest cadence spends nothing.",
+        tests=("tests/test_w2.py",),
+    ),
+    Mutation(
+        name="barren-domain-never-marked-mapped",
+        path="src/finder/harvest/w2_routes.py",
+        old="        self.store.organizations.mark_mapped(org.org_id)",
+        new="        pass",
+        why="'Looked at, found nothing' is an answer. Treating it as never-looked-at "
+        "re-maps the same barren domain every single run, forever.",
+        tests=("tests/test_w2.py",),
+    ),
+    Mutation(
+        name="unmappable-domain-marked-mapped",
+        path="src/finder/harvest/w2_routes.py",
+        old="        if not outcome.mapped:",
+        new="        if False:",
+        why="Marking a domain mapped after a 503 skips it for a month over a transient "
+        "failure, and makes a dead provider look like a set of barren domains.",
+        tests=("tests/test_w2.py",),
+    ),
+    Mutation(
+        name="candidates-not-deduplicated",
+        path="src/finder/harvest/w2_routes.py",
+        old="            if hit.url in seen:",
+        new="            if False:",
+        why="Two chambers on one AMS host surface the same page; reading it twice costs "
+        "two fetches and produces two candidate routes for one page.",
+        tests=("tests/test_w2.py",),
+    ),
+    Mutation(
+        name="organizations-not-checkpointed",
+        path="src/finder/harvest/w2_routes.py",
+        old='            with run.item("map_routes", org.org_id) as claimed:',
+        new='            with run.item("map_routes", "all") as claimed:',
+        why="One key for every organization means the first one done marks the rest "
+        "complete, and a resumed run skips the whole registry.",
+        tests=("tests/test_w2.py",),
+    ),
+    Mutation(
+        name="partner-paths-dropped-from-the-map",
+        path="src/finder/harvest/w2_routes.py",
+        old="        self.terms = list(dict.fromkeys([*programming_paths, *partner_paths]))",
+        new="        self.terms = list(programming_paths)",
+        why="The service and provider pages disappear, and with them the CHANNEL "
+        "routes — the family the founder named as the goal. The map call is the "
+        "cost; matching more terms against it is free.",
+        tests=("tests/test_w2.py",),
+    ),
+    Mutation(
+        name="retier-writes-every-row",
+        path="src/finder/harvest/w2_routes.py",
+        old="            if earned != org.tier:",
+        new="            if True:",
+        why="Reporting every organization as changed makes the one that actually moved "
+        "impossible to see.",
+        tests=("tests/test_w2.py",),
+    ),
+    Mutation(
+        name="map-outcome-hides-failure",
+        path="src/finder/acquire/map.py",
+        old='        return MapOutcome(hits=[], source="", failures=tuple(failures))',
+        new='        return MapOutcome(hits=[], source="sitemap", failures=tuple(failures))',
+        why="A domain nobody could reach is not a domain with nothing on it, and a "
+        "caller that cannot tell them apart will mark the unreachable one done.",
+        tests=("tests/test_w2.py", "tests/test_map.py"),
+    ),
 ]
 
 

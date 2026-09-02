@@ -61,6 +61,11 @@ PARTNER_PATHS:       # CHANNEL family, used by W13 ChannelProspector
   - supplier
   - consultant
   - consultants
+  # A service page is where an organization says what it delivers and who
+  # delivers it. That is the CHANNEL signal, and nothing else was catching it:
+  # gamep.org/services/workforce-development matched no term in either list.
+  - service
+  - services
   - instructor
   - instructors
   - faculty

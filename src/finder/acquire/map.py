@@ -347,6 +347,24 @@ def _tag(element: ElementTree.Element) -> str:
 # --- orchestration ---------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class MapOutcome:
+    """What mapping one domain produced, and whether it worked at all.
+
+    ``mapped`` is the distinction that matters: a domain nobody could reach is
+    not a domain with nothing on it, and a caller handed a bare empty list
+    cannot tell the two apart.
+    """
+
+    hits: list[MapHit]
+    source: str = ""
+    failures: tuple[str, ...] = ()
+
+    @property
+    def mapped(self) -> bool:
+        return bool(self.source)
+
+
 class UrlInventory:
     """Map a domain, falling back to its sitemap, and say which was used."""
 
@@ -369,8 +387,27 @@ class UrlInventory:
         limit: int | None = None,
         run: RunContext | None = None,
     ) -> list[MapHit]:
-        """Hits for one domain. Empty means the domain could not be mapped —
-        which is recorded in ``not_reached``, never passed off as 'nothing here'."""
+        """Hits for one domain. Convenience over :meth:`map_detailed`.
+
+        An empty list here is ambiguous by construction — use ``map_detailed``
+        when the caller needs to tell "nothing matched" from "could not map".
+        """
+        return self.map_detailed(domain, terms, limit=limit, run=run).hits
+
+    def map_detailed(
+        self,
+        domain: str,
+        terms: Sequence[str],
+        *,
+        limit: int | None = None,
+        run: RunContext | None = None,
+    ) -> MapOutcome:
+        """Hits plus whether the domain was mapped at all.
+
+        A domain nobody could reach is recorded in ``not_reached`` and comes
+        back with ``mapped`` False; a domain that mapped fine and matched
+        nothing comes back mapped with no hits. Those are different findings.
+        """
         cap = limit or self.limit
         attempts: list[tuple[MapProvider, str]] = [(self.provider, "provider")]
         if self.fallback is not None:
@@ -394,11 +431,11 @@ class UrlInventory:
                     inventory=len(pairs),
                     hits=len(hits),
                 )
-            return hits
+            return MapOutcome(hits=hits, source=source.name, failures=tuple(failures))
 
         if run is not None:
             run.record_not_reached("map_failed", f"{domain}: " + "; ".join(failures))
-        return []
+        return MapOutcome(hits=[], source="", failures=tuple(failures))
 
 
 def hits_by_term(hits: Iterable[MapHit]) -> dict[str, int]:

@@ -152,6 +152,17 @@ class OrganizationRepo(_Repo):
         rows = self._all("SELECT * FROM organization WHERE name_normalized = ?", (name_normalized,))
         return [self._row(r) for r in rows]
 
+    def all(self) -> list[Organization]:
+        """Every organization, in a stable order."""
+        return [
+            self._row(r) for r in self._all("SELECT * FROM organization ORDER BY canonical_domain")
+        ]
+
+    def set_tier(self, org_id: str, tier: str) -> None:
+        """Tier is earned from evidence and recomputed; it is not a fact about
+        the row that only its discoverer may set."""
+        self._exec("UPDATE organization SET tier = ? WHERE org_id = ?", (tier, org_id))
+
     def due_for_mapping(self, tier: str, before: str) -> list[Organization]:
         """Tier A weekly, B biweekly, C monthly — the caller supplies the cutoff."""
         rows = self._all(
@@ -580,6 +591,24 @@ class ScoreRepo(_Repo):
             components=json.loads(row["components"]),
         )
 
+    def best_fit_for_organization(self, org_id: str) -> int | None:
+        """The organization's best FIT, taking each route's LATEST score.
+
+        Best, not average: one strong route is a reason to look at an
+        organization weekly, and averaging it against four weak ones buries it.
+        The same reasoning as ``access_warmth`` rolling up as the best known
+        path rather than the mean.
+        """
+        row = self._one(
+            "SELECT MAX(s.fit) AS best FROM score s"
+            " JOIN route r ON r.route_id = s.route_id"
+            " WHERE r.org_id = ?"
+            "   AND s.scored_at = ("
+            "     SELECT MAX(s2.scored_at) FROM score s2 WHERE s2.route_id = s.route_id)",
+            (org_id,),
+        )
+        return row["best"] if row and row["best"] is not None else None
+
     def history(self, route_id: str) -> list[Score]:
         rows = self._all(
             "SELECT score_id FROM score WHERE route_id = ? ORDER BY scored_at", (route_id,)
@@ -719,6 +748,20 @@ class MarkRepo(_Repo):
             "SELECT * FROM founder_mark WHERE route_id = ? ORDER BY marked_at", (route_id,)
         )
         return [self._row(r) for r in rows]
+
+    def verdicts_for_organization(self, org_id: str) -> list[str]:
+        """Every verdict the founder has recorded on any route at this organization.
+
+        Read-only, like everything else here. Marks are appended, never changed.
+        """
+        rows = self._all(
+            "SELECT m.verdict FROM founder_mark m"
+            " JOIN route r ON r.route_id = m.route_id"
+            " WHERE r.org_id = ? AND m.verdict IS NOT NULL"
+            " ORDER BY m.marked_at",
+            (org_id,),
+        )
+        return [r["verdict"] for r in rows]
 
     def all_marks(self) -> list[FounderMark]:
         """The entire training set. Every learning mechanism starts here."""
