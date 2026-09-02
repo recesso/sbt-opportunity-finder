@@ -1,8 +1,8 @@
 # CONTINUE HERE
 
-**Last updated:** 2026-09-02 · **25% of the plan by atomic step (84/340).** E0 complete ·
-E1.S1/S2/S4 · E2.S1/S2/S5 · E3.S1/S2/S8 · E5.S1. 587 tests, 98% branch coverage,
-140/140 mutations caught.
+**Last updated:** 2026-09-02 · **26% of the plan by atomic step (89/340).** E0 complete ·
+E1.S1/S2/S3/S4 · E2.S1/S2/S5 · E3.S1/S2/S8 · E5.S1. 621 tests, 98% branch coverage,
+152/152 mutations caught.
 
 If you are a new session or a new engineer, read this file, then `CLAUDE.md`, then run `bd ready`.
 That is the whole orientation.
@@ -13,13 +13,13 @@ That is the whole orientation.
 
 | | |
 |---|---|
-| **Done** | E0.S1 tooling and CI · E0.S2 config · E0.S3 secrets and redaction · E0.S4 run harness · E0.S5 cost ledger · E1.S1 schema · E1.S2 repositories · E1.S4 dedupe keys · E2.S1 fetch · E2.S2 snapshots · E2.S5 URL inventory · E3.S1 network registrar · E3.S2 route mapper · E3.S8 graph expansion · E5.S1 extraction contract |
-| **Next** | `bd ready` → **E4.S1** (marker gate — the precision half), **E5.S2** (mechanism extractor — highest risk in the plan), **E1.S3** (founder write guard), **E3.S3** (W13 ChannelProspector) |
+| **Done** | E0.S1 tooling and CI · E0.S2 config · E0.S3 secrets and redaction · E0.S4 run harness · E0.S5 cost ledger · E1.S1 schema · E1.S2 repositories · E1.S3 founder write guard · E1.S4 dedupe keys · E2.S1 fetch · E2.S2 snapshots · E2.S5 URL inventory · E3.S1 network registrar · E3.S2 route mapper · E3.S8 graph expansion · E5.S1 extraction contract |
+| **Next** | `bd ready` → **E4.S1** (marker gate — the precision half), **E5.S2** (mechanism extractor — highest risk in the plan), **E3.S3** (W13 ChannelProspector) |
 | **Nothing is running** | No scheduled jobs, no data collected, no live database yet |
 
 ```bash
 make install
-make check      # lint + 587 tests, offline
+make check      # lint + 621 tests, offline
 make cov        # branch coverage, fails under 88%
 make audit      # breaks the code on purpose; every mutation must be caught
 bd ready
@@ -27,7 +27,7 @@ bd ready
 
 ## How this project judges its own tests
 
-`make audit` is not optional decoration. It runs in about four minutes and applies 140 specific
+`make audit` is not optional decoration. It runs in about four minutes and applies 152 specific
 mutations — each one a real bug a competent engineer could introduce — and fails if the suite does not notice. **A passing suite
 proves nothing; a suite that catches deliberate sabotage proves something.** CI runs it on every
 push alongside a branch-coverage floor.
@@ -43,6 +43,9 @@ code moved out from under it — fix the mutation, do not delete it.
   `src/finder/config.py`. Cross-file invariants are enforced at startup; a typo fails loudly.
 - `src/finder/config.py` — `load_config()` returns a frozen `Config` with a `hash` recorded on
   every future score row.
+- `src/finder/store/guard.py` — the founder-owned write guard. A SQLite authorizer below the
+  repository layer; raw SQL is refused identically. `cached_statements=0` in `connect()` is
+  load-bearing, not tuning — see the comment there before changing it.
 - `src/finder/secrets.py` + `src/finder/logging.py` — env-only secrets, `require()` reporting all
   missing keys at once, and a structlog processor that makes it impossible for a key to appear in
   a log line.
@@ -179,6 +182,11 @@ Milestone M1 is the thinnest slice that produces a real ranked list:
   strong route is a reason to look weekly, and averaging it against four weak ones buries it.
 - **"Mapped, found nothing" and "could not be mapped" are different findings.** `map_detailed`
   keeps them apart, so a 503 does not mark a domain looked-at and skip it for a month.
+
+- **The founder write guard had a hole the tests found.** SQLite runs its authorizer at statement
+  PREPARE time, and Python's sqlite3 reuses prepared statements — so with the statement cache on,
+  the *second* identical write to a founder-owned table skipped the guard entirely. A guard that
+  protects only the first row. `cached_statements=0` is load-bearing; do not "optimise" it away.
 
 ## Three routes already verified by hand
 
