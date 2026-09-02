@@ -232,7 +232,12 @@ def test_a_cycle_does_not_loop_forever(store: Store) -> None:
 
     assert result.created == 1
     assert fetcher.calls.count("https://a.org/partners") == 1
-    assert "a.org" in result.visited
+    assert "a.org" in result.visited, "the seed is visited before the walk starts"
+    assert result.already_known == 0, (
+        "B's page links back to A, but A is where we STARTED. Counting the seed as "
+        "an organization the expansion rediscovered would overstate the overlap and "
+        "understate what the hop actually produced"
+    )
 
 
 def test_a_self_link_is_not_an_edge(store: Store) -> None:

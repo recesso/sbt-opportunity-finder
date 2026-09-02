@@ -195,8 +195,8 @@ class GraphExpander:
         edges: list[Edge] = []
         for raw_name, url in self.extractor.extract(page):
             to_domain = registrable_domain(url)
-            if to_domain == from_domain:
-                continue  # a site linking to itself is not an edge
+            # looks_like_a_node rejects a link back to `parent_domain`, which is
+            # how a site linking to itself is excluded. No separate check.
             if not looks_like_a_node(raw_name, url, parent_domain=from_domain):
                 continue
             if to_domain in seen_here:

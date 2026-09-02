@@ -1123,15 +1123,6 @@ MUTATIONS: list[Mutation] = [
         tests=("tests/test_expand.py",),
     ),
     Mutation(
-        name="expansion-follows-self-links",
-        path="src/finder/harvest/expand.py",
-        old="            if to_domain == from_domain:",
-        new="            if False:",
-        why="Every page links to its own site. Treating that as an edge makes each "
-        "organization a partner of itself.",
-        tests=("tests/test_expand.py",),
-    ),
-    Mutation(
         name="expansion-registers-duplicates-per-page",
         path="src/finder/harvest/expand.py",
         old="            if to_domain in seen_here:",
