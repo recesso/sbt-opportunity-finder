@@ -771,6 +771,12 @@ def test_the_same_domain_across_two_sectors_is_registered_once(store: Store) -> 
 
     assert len(search.queries) == 2, "both sectors were searched"
     assert result.created == 1
+    assert result.found == 1
+    assert result.already_known == 0, (
+        "already_known means 'was in the registry before this pass', not "
+        "'we wrote it two lines ago' — conflating them would report every "
+        "discovery as half-redundant"
+    )
 
 
 def test_search_junk_is_not_registered(store: Store) -> None:
@@ -789,18 +795,22 @@ def test_search_junk_is_not_registered(store: Store) -> None:
 def test_a_failed_query_is_reported_and_the_rest_continue(store: Store) -> None:
     class OneBadSector(FakeSearch):
         def search(self, query, *, limit=25, include_domains=None):
+            self.queries.append((query, limit))
             if query.startswith("supply chain"):
                 raise FetchError("429 rate limited")
-            return super().search(query, limit=limit, include_domains=include_domains)
+            return [replace(r, query=query) for r in self.results]
 
     search = OneBadSector(found("https://myscma.com/", "SCMA"))
 
+    # The failing sector goes FIRST on purpose. With it last, abandoning the loop
+    # and continuing past it look identical, and the test proves nothing.
     with start_run(store, "weekly", run_id="r-1") as run:
         result = registrar(store).discover(
-            THESIS, ["manufacturing", "supply_chain"], search=search, run=run
+            THESIS, ["supply_chain", "manufacturing"], search=search, run=run
         )
 
-    assert result.created == 1, "the working sector still produced its find"
+    assert result.created == 1, "the sector AFTER the failure still produced its find"
+    assert len(search.queries) == 2, "discovery stopped at the first failure"
     not_reached = store.runs.get("r-1").not_reached
     assert not_reached[0]["reason"] == "discovery_failed"
     assert "supply chain" in not_reached[0]["detail"]
