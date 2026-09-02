@@ -1840,6 +1840,61 @@ MUTATIONS: list[Mutation] = [
         "and a gate that suddenly drops everything looks like a quiet week.",
         tests=("tests/test_w16.py",),
     ),
+    # --- thesis similarity ---------------------------------------------------
+    Mutation(
+        name="thesis-keeps-stopwords",
+        path="src/finder/precision/thesis.py",
+        old="if t not in STOPWORDS and len(t) > 2]",
+        new="]",
+        why="Two pages are not similar because they are both written in English. "
+        "Keeping stopwords makes every page look like every thesis.",
+        tests=("tests/test_thesis.py",),
+    ),
+    Mutation(
+        name="thesis-weights-linear-in-frequency",
+        path="src/finder/precision/thesis.py",
+        old="        weights = {term: 1.0 + math.log(n) for term, n in counts.items()}",
+        new="        weights = {term: float(n) for term, n in counts.items()}",
+        why="Linear weights let one repeated word swamp the comparison, so a page "
+        "saying 'employer' twenty times outranks one that actually matches.",
+        tests=("tests/test_thesis.py",),
+    ),
+    Mutation(
+        name="thesis-similarity-unnormalised",
+        path="src/finder/precision/thesis.py",
+        old="        return max(0.0, min(1.0, dot / (self.norm * candidate_norm)))",
+        new="        return dot",
+        why="An unbounded score cannot be compared to a floor, and long pages win by "
+        "being long rather than by being relevant.",
+        tests=("tests/test_thesis.py",),
+    ),
+    Mutation(
+        name="thesis-cache-ignores-the-config-hash",
+        path="src/finder/precision/thesis.py",
+        old="        return f\"{VERSION}-{self.config_hash or 'nohash'}\"",
+        new="        return VERSION",
+        why="Editing the thesis text would silently keep scoring against yesterday's "
+        "wording, and nobody would know the change had no effect.",
+        tests=("tests/test_thesis.py",),
+    ),
+    Mutation(
+        name="thesis-family-lookup-unchecked",
+        path="src/finder/precision/thesis.py",
+        old="            if vector is None:",
+        new="            if False:",
+        why="A typo'd family name would crash deep inside instead of naming the "
+        "mistake, or worse, silently score against nothing.",
+        tests=("tests/test_thesis.py",),
+    ),
+    Mutation(
+        name="thesis-best-family-takes-the-worst",
+        path="src/finder/precision/thesis.py",
+        old="        return max(scored, key=lambda pair: (pair[1], pair[0]))",
+        new="        return min(scored, key=lambda pair: (pair[1], pair[0]))",
+        why="A CHANNEL page would be reported as whichever family it least resembles, "
+        "sending the extractor at the wrong schema.",
+        tests=("tests/test_thesis.py",),
+    ),
 ]
 
 
