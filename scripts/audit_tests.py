@@ -1719,6 +1719,127 @@ MUTATIONS: list[Mutation] = [
         "throws that signal away.",
         tests=("tests/test_gate.py",),
     ),
+    # --- rerank and the precision pipeline ----------------------------------
+    Mutation(
+        name="rerank-order-unstable",
+        path="src/finder/acquire/providers/rerank.py",
+        old="        return sorted(hits, key=lambda h: (-h.score, h.index))",
+        new="        return hits",
+        why="The same candidates must rank the same way twice, or a week's list "
+        "reshuffles for no reason and nobody can tell whether the system changed its "
+        "mind or the provider did.",
+        tests=("tests/test_rerank.py",),
+    ),
+    Mutation(
+        name="rerank-ties-unbroken",
+        path="src/finder/acquire/providers/rerank.py",
+        old="        return sorted(hits, key=lambda h: (-h.score, h.index))",
+        new="        return sorted(hits, key=lambda h: -h.score)",
+        why="Two equally good candidates would swap places between runs. Arbitrary is "
+        "fine; unstable is not.",
+        tests=("tests/test_rerank.py",),
+    ),
+    Mutation(
+        name="rerank-accepts-a-foreign-index",
+        path="src/finder/acquire/providers/rerank.py",
+        old="            if not isinstance(index, int) or not 0 <= index < doc_count:",
+        new="            if not isinstance(index, int):",
+        why="An index pointing at a document that was never sent silently ranks some "
+        "other candidate, and the wrong page gets extracted.",
+        tests=("tests/test_rerank.py",),
+    ),
+    Mutation(
+        name="rerank-truncates-to-the-masthead",
+        path="src/finder/acquire/providers/rerank.py",
+        old="    if not markers:",
+        new="    if True:",
+        why="A call for speakers is usually two thirds of the way down. Head truncation "
+        "sends the reranker a navigation menu and asks it to judge the page.",
+        tests=("tests/test_rerank.py",),
+    ),
+    Mutation(
+        name="empty-ranking-treated-as-a-ranking",
+        path="src/finder/acquire/providers/rerank.py",
+        old='            raise FetchError("the reranker returned no results")',
+        new="            return []",
+        why="An empty ranking silently drops every candidate that survived the gate — "
+        "the whole week, reported as nothing worth looking at.",
+        tests=("tests/test_rerank.py",),
+    ),
+    Mutation(
+        name="expensive-stage-runs-on-everything",
+        path="src/finder/precision/w16_rerank.py",
+        old="            if not gate.passed:",
+        new="            if False:",
+        why="Spending the cross-encoder on candidates the free gate would have rejected "
+        "makes the precision layer the most expensive part of the system while adding "
+        "the least.",
+        tests=("tests/test_w16.py",),
+    ),
+    Mutation(
+        name="drop-recorded-without-a-reason",
+        path="src/finder/precision/w16_rerank.py",
+        old="                        reason=gate.reason,",
+        new='                        reason="",',
+        why="A drop with no reason is invisible, and an invisible drop cannot be argued "
+        "with, tuned or learned from. This is the whole acceptance criterion.",
+        tests=("tests/test_w16.py",),
+    ),
+    Mutation(
+        name="drops-not-persisted",
+        path="src/finder/precision/w16_rerank.py",
+        old="        for decision in result.decisions:",
+        new="        for decision in result.kept:",
+        why="Persisting only the keeps is exactly how the predecessor's filtering became "
+        "folklore: nobody could answer why a page was never seen.",
+        tests=("tests/test_w16.py",),
+    ),
+    Mutation(
+        name="repo-accepts-a-reasonless-drop",
+        path="src/finder/store/repos.py",
+        old="        if not kept and not reason:",
+        new="        if False:",
+        why="The rule belongs at the boundary, not in every caller's memory.",
+        tests=("tests/test_w16.py",),
+    ),
+    Mutation(
+        name="rerank-outage-drops-the-week",
+        path="src/finder/precision/w16_rerank.py",
+        old="            self._keep_all(scored, result, rerank_score=None, "
+        "reason=REASON_RERANK_UNAVAILABLE)",
+        new="            return",
+        why="A candidate dropped because a vendor was down is invisible; one wrongly "
+        "kept costs one extraction and shows up in the report. Keeping is the right "
+        "failure mode.",
+        tests=("tests/test_w16.py",),
+    ),
+    Mutation(
+        name="missing-rerank-score-passes",
+        path="src/finder/precision/w16_rerank.py",
+        old="            if score is None or score < self.rerank_floor:",
+        new="            if score is not None and score < self.rerank_floor:",
+        why="A reranker returning fewer rows than it was sent would have the ones it "
+        "forgot silently kept and ranked at zero.",
+        tests=("tests/test_w16.py",),
+    ),
+    Mutation(
+        name="offdomain-link-feature-lost",
+        path="src/finder/precision/w16_rerank.py",
+        old="        host.lower() in link.lower() and host.lower() not in own",
+        new="        host.lower() in own",
+        why="The GSAE form is a SurveyMonkey link in body text. A page that links OUT to "
+        "a submission host is the single best cheap signal that it is a real way in.",
+        tests=("tests/test_w16.py",),
+    ),
+    Mutation(
+        name="funnel-counters-lost",
+        path="src/finder/precision/w16_rerank.py",
+        old='            run.count("survived_gate", len(survivors))',
+        new="            pass",
+        why="Without the funnel counts nobody can see where a week's candidates went, "
+        "and a gate that suddenly drops everything looks like a quiet week.",
+        tests=("tests/test_w16.py",),
+    ),
 ]
 
 

@@ -1255,6 +1255,86 @@ class NetworkRepo(_Repo):
         )
 
 
+class DecisionRepo(_Repo):
+    """One row per candidate the precision layer judged — kept or dropped.
+
+    The predecessor's filtering became folklore because drops left no trace.
+    This is the table that answers "why did we never see the GSAE form?" without
+    guessing, so a recall problem is a query rather than an archaeology project.
+    """
+
+    def record(
+        self,
+        *,
+        decision_id: str,
+        run_id: str,
+        url: str,
+        kept: bool,
+        stage: str,
+        reason: str,
+        decided_at: str,
+        org_id: str | None = None,
+        combo: str | None = None,
+        similarity: float | None = None,
+        rerank_score: float | None = None,
+        features: str = "{}",
+    ) -> None:
+        if not kept and not reason:
+            raise RepoError(
+                f"a dropped candidate needs a reason ({url}); a drop with no reason is "
+                "exactly the invisibility this table exists to end"
+            )
+        self._exec(
+            "INSERT INTO precision_decision (decision_id, run_id, url, org_id, kept, stage,"
+            " reason, combo, similarity, rerank_score, features, decided_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(run_id, url) DO UPDATE SET"
+            "   kept = excluded.kept, stage = excluded.stage, reason = excluded.reason,"
+            "   combo = excluded.combo, similarity = excluded.similarity,"
+            "   rerank_score = excluded.rerank_score, features = excluded.features,"
+            "   decided_at = excluded.decided_at",
+            (
+                decision_id,
+                run_id,
+                url,
+                org_id,
+                1 if kept else 0,
+                stage,
+                reason,
+                combo,
+                similarity,
+                rerank_score,
+                features,
+                decided_at,
+            ),
+        )
+
+    def for_run(self, run_id: str, *, kept: bool | None = None) -> list[sqlite3.Row]:
+        sql = "SELECT * FROM precision_decision WHERE run_id = ?"
+        params: list[Any] = [run_id]
+        if kept is not None:
+            sql += " AND kept = ?"
+            params.append(1 if kept else 0)
+        return self._all(sql + " ORDER BY rerank_score DESC, url", params)
+
+    def why_dropped(self, url: str) -> list[sqlite3.Row]:
+        """Every run's verdict on one URL. The question a recall complaint asks."""
+        return self._all(
+            "SELECT * FROM precision_decision WHERE url = ? ORDER BY decided_at DESC", (url,)
+        )
+
+    def drop_reasons(self, run_id: str) -> dict[str, int]:
+        rows = self._all(
+            "SELECT reason, COUNT(*) c FROM precision_decision WHERE run_id = ? AND kept = 0"
+            " GROUP BY reason ORDER BY c DESC, reason",
+            (run_id,),
+        )
+        return {r["reason"]: r["c"] for r in rows}
+
+    def count(self) -> int:
+        return self._one("SELECT COUNT(*) c FROM precision_decision")["c"]  # type: ignore[index]
+
+
 class Store:
     """All repositories over one connection, plus the unit of work.
 
@@ -1278,6 +1358,7 @@ class Store:
         self.stage_runs = StageRunRepo(conn)
         self.costs = CostRepo(conn)
         self.fetch_log = FetchLogRepo(conn)
+        self.decisions = DecisionRepo(conn)
 
     @contextmanager
     def unit_of_work(self) -> Iterator[Store]:
